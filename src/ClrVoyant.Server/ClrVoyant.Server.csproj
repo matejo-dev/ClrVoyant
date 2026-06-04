@@ -1,0 +1,94 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\ClrVoyant.Core\ClrVoyant.Core.csproj" />
+    <ProjectReference Include="..\ClrVoyant.Dap\ClrVoyant.Dap.csproj" />
+    <ProjectReference Include="..\ClrVoyant.Inspection\ClrVoyant.Inspection.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+    <PackageReference Include="ModelContextProtocol" />
+    <PackageReference Include="ModelContextProtocol.AspNetCore" />
+    <PackageReference Include="System.Management" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="ClrVoyant.Tests" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- No PlatformTarget pin (AnyCPU): the server runs at the host architecture so
+         the in-process ClrMD inspector and netcoredbg match the co-located target.
+         Supported hosts/targets: win-x64, linux-x64, linux-arm64. -->
+  </PropertyGroup>
+
+  <!-- Distributable as a .NET global tool: `dotnet tool install -g ClrVoyant` gives
+       an `clrvoyant` command on PATH (no bin/Release paths in client config). -->
+  <PropertyGroup>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>clrvoyant</ToolCommandName>
+    <PackageId>ClrVoyant</PackageId>
+    <IsPackable>true</IsPackable>
+    <Version>0.1.0</Version>
+    <Description>A local MCP server that lets an agent debug .NET 8/9/10 apps headlessly — breakpoints, stepping, variables, and full async Task introspection (the "Tasks window" via ClrMD).</Description>
+    <PackageTags>mcp;debugger;dotnet;netcoredbg;clrmd;async;tasks</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <!-- Pinned netcoredbg coordinates baked into the assembly so the runtime fetch
+       (NetcoredbgFetcher, used when running as an installed tool with no bundled
+       copy) knows exactly what to download for the current OS + architecture. -->
+  <ItemGroup>
+    <AssemblyMetadata Include="NetcoredbgVersion" Value="$(NetcoredbgVersion)" />
+    <AssemblyMetadata Include="NetcoredbgSha256Windows" Value="$(NetcoredbgSha256Windows)" />
+    <AssemblyMetadata Include="NetcoredbgSha256Linux" Value="$(NetcoredbgSha256Linux)" />
+    <AssemblyMetadata Include="NetcoredbgSha256LinuxArm64" Value="$(NetcoredbgSha256LinuxArm64)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <!-- netcoredbg is fetched at build time (pinned version, SHA-256 verified) into
+       a local cache under tools/netcoredbg/, then bundled next to the server where
+       NetcoredbgLocator finds it. It is NOT committed to the repo (MIT, large
+       binary). The download runs ONLY when the cache is missing, so a fresh clone
+       fetches once and later builds skip it. Version/hashes are pinned in
+       Directory.Build.props (single source of truth). See THIRD-PARTY-NOTICES.md. -->
+
+  <!-- Populate the cache (only when missing). -->
+  <Target Name="FetchNetcoredbg" BeforeTargets="Build;Publish">
+    <Exec Condition="!Exists('$(NetcoredbgCacheDir)\$(NetcoredbgExeName)') And $([MSBuild]::IsOSPlatform('Windows'))"
+          Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(RepoToolsDir)\fetch-netcoredbg.ps1&quot; -Version $(NetcoredbgVersion) -Sha256 $(NetcoredbgSha256) -DestDir &quot;$(NetcoredbgCacheDir)&quot;" />
+    <Exec Condition="!Exists('$(NetcoredbgCacheDir)/$(NetcoredbgExeName)') And !$([MSBuild]::IsOSPlatform('Windows'))"
+          Command="bash &quot;$(RepoToolsDir)/fetch-netcoredbg.sh&quot; $(NetcoredbgVersion) $(NetcoredbgSha256) &quot;$(NetcoredbgCacheDir)&quot;" />
+  </Target>
+
+  <!-- Bundle the cache next to the server (build output and publish output), where
+       NetcoredbgLocator finds it. Explicit Copy with a destination transform is
+       robust across OSes and for items produced during the build. -->
+  <Target Name="BundleNetcoredbgToOutput" AfterTargets="Build" DependsOnTargets="FetchNetcoredbg">
+    <ItemGroup>
+      <_Netcoredbg Include="$(NetcoredbgCacheDir)\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_Netcoredbg)"
+          DestinationFiles="@(_Netcoredbg->'$(OutDir)tools\netcoredbg\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+  <Target Name="BundleNetcoredbgToPublish" AfterTargets="Publish" DependsOnTargets="FetchNetcoredbg">
+    <ItemGroup>
+      <_Netcoredbg Include="$(NetcoredbgCacheDir)\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_Netcoredbg)"
+          DestinationFiles="@(_Netcoredbg->'$(PublishDir)tools\netcoredbg\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>

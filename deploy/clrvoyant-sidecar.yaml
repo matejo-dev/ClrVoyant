@@ -1,0 +1,80 @@
+# Example: run ClrVoyant as a debug sidecar next to an app you want to debug.
+#
+# Model: shareProcessNamespace lets the sidecar SEE the app's processes (same PID
+# namespace); CAP_SYS_PTRACE lets netcoredbg attach and ClrMD read the heap. The
+# agent reaches the sidecar's HTTP MCP endpoint (port 3001) — keep it cluster-
+# internal and use `kubectl port-forward`, never a public Service/Ingress.
+#
+# Requirements for useful debugging:
+#   - the APP image must ship its .pdb files (source lines + locals).
+#   - the app and sidecar must be the same architecture (x64) and .NET 8+.
+#
+# SECURITY: this grants a remote, authenticated caller the ability to attach a
+# debugger, set breakpoints and EVALUATE code in the app process. Treat it as a
+# break-glass / non-prod capability. The bearer token is the only gate — rotate it
+# and scope network access tightly (NetworkPolicy + port-forward only).
+apiVersion: v1
+kind: Secret
+metadata:
+  name: clrvoyant-auth
+type: Opaque
+stringData:
+  # Replace with a strong random secret (e.g. `openssl rand -hex 32`).
+  token: "CHANGE-ME-strong-random-token"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-app-with-debugger
+  labels: { app: my-app }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: my-app }
+  template:
+    metadata:
+      labels: { app: my-app }
+    spec:
+      # Both containers share one PID namespace so the sidecar can see + attach
+      # the app process.
+      shareProcessNamespace: true
+      containers:
+        # ---- the application being debugged ----
+        - name: app
+          image: your-registry/your-dotnet-app:debug   # MUST include .pdb files
+          # Optional: hold startup until you attach (suspend-at-startup) by setting
+          #   DOTNET_DefaultDiagnosticPortSuspend=1
+          # then resume via the diagnostic port once the debugger is attached.
+
+        # ---- the ClrVoyant sidecar ----
+        - name: clrvoyant
+          image: your-registry/clrvoyant:latest          # built from deploy/Dockerfile
+          ports:
+            - name: mcp
+              containerPort: 3001
+          env:
+            - name: CLRVOYANT_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef: { name: clrvoyant-auth, key: token }
+          securityContext:
+            capabilities:
+              add: ["SYS_PTRACE"]    # required: netcoredbg attach + ClrMD read
+            # readOnlyRootFilesystem could be enabled with a writable /tmp for dumps.
+          readinessProbe:
+            tcpSocket: { port: 3001 }
+            initialDelaySeconds: 3
+---
+# Cluster-internal only. Access with:
+#   kubectl port-forward deploy/my-app-with-debugger 3001:3001
+# then point the agent at http://127.0.0.1:3001 with the bearer token.
+apiVersion: v1
+kind: Service
+metadata:
+  name: clrvoyant
+spec:
+  type: ClusterIP
+  selector: { app: my-app }
+  ports:
+    - name: mcp
+      port: 3001
+      targetPort: 3001

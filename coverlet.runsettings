@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RunSettings>
+  <DataCollectionRunSettings>
+    <DataCollectors>
+      <DataCollector friendlyName="XPlat code coverage">
+        <Configuration>
+          <Format>cobertura</Format>
+          <!-- Measure only our product assemblies. -->
+          <Include>[ClrVoyant.Core]*,[ClrVoyant.Dap]*,[ClrVoyant.Inspection]*,[ClrVoyant.Server]*</Include>
+          <Exclude>[ClrVoyant.Tests]*,[SampleApp]*</Exclude>
+          <!-- Program.cs is the stdio entry shim (not exercised in-process). -->
+          <ExcludeByFile>**/Program.cs</ExcludeByFile>
+          <ExcludeByAttribute>GeneratedCodeAttribute,ExcludeFromCodeCoverageAttribute,CompilerGeneratedAttribute</ExcludeByAttribute>
+          <SkipAutoProps>true</SkipAutoProps>
+        </Configuration>
+      </DataCollector>
+    </DataCollectors>
+  </DataCollectionRunSettings>
+</RunSettings>

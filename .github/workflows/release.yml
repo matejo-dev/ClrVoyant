@@ -1,0 +1,80 @@
+# Publish ClrVoyant to NuGet.org on a version tag, using Trusted Publishing
+# (GitHub OIDC -> short-lived API key). No long-lived NuGet secret is stored.
+#
+# One-time setup (this workflow runs in the GitHub Environment `release`):
+#   1. GitHub: Settings -> Environments -> New environment `release` (add a
+#      required reviewer if you want a manual approval gate before publishing).
+#   2. GitHub: in that `release` environment, add an Environment variable
+#      NUGET_USER = your nuget.org username (the profile name, NOT your email).
+#   3. nuget.org: Account -> Trusted Publishing -> Add policy:
+#        Repository Owner: matejo-dev   Repository: ClrVoyant
+#        Workflow File: release.yml     Environment: release
+#
+# Publish a release by pushing a tag, e.g.:  git tag v0.1.0 && git push origin v0.1.0
+# The published package version is taken from the tag (v0.1.0 -> 0.1.0), so the tag
+# is the single source of truth — no need to bump <Version> in the csproj.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+  id-token: write        # required: lets the job request a GitHub OIDC token
+
+jobs:
+  publish:
+    name: pack & publish to NuGet.org
+    runs-on: ubuntu-latest
+    environment: release     # gate + scopes NUGET_USER and the trusted-publishing policy
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      # Gate the release on a green build + full test suite (an immutable NuGet
+      # version must not ship untested). Sample targets are external processes.
+      - name: Build sample targets
+        run: |
+          dotnet build samples/SampleApp/SampleApp.csproj -c Release
+          dotnet build samples/ParentApp/ParentApp.csproj -c Release
+      - name: Test
+        run: dotnet test tests/ClrVoyant.Tests/ClrVoyant.Tests.csproj -c Release
+
+      # Tag vX.Y.Z -> package version X.Y.Z (strip the leading "v").
+      - name: Derive version from tag
+        id: ver
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Pack
+        run: >
+          dotnet pack src/ClrVoyant.Server/ClrVoyant.Server.csproj
+          -c Release -o "${{ runner.temp }}/nupkg"
+          -p:Version=${{ steps.ver.outputs.version }}
+
+      # Trusted Publishing: exchange the OIDC token for a 1-hour NuGet API key.
+      - name: NuGet login (OIDC -> short-lived API key)
+        uses: NuGet/login@v1
+        id: login
+        with:
+          user: ${{ vars.NUGET_USER }}
+
+      - name: Push to NuGet.org
+        run: >
+          dotnet nuget push "${{ runner.temp }}/nupkg/*.nupkg"
+          --api-key ${{ steps.login.outputs.NUGET_API_KEY }}
+          --source https://api.nuget.org/v3/index.json
+          --skip-duplicate
+
+      # --- Fallback if Trusted Publishing is NOT yet enabled on your account ---
+      # Replace the two steps above (NuGet/login + push) with a scoped API key:
+      #   1. Create a key on nuget.org (Push, glob pattern: ClrVoyant*).
+      #   2. Store it as repo secret NUGET_API_KEY.
+      #   3. - name: Push to NuGet.org (API key)
+      #        run: >
+      #          dotnet nuget push "${{ runner.temp }}/nupkg/*.nupkg"
+      #          --api-key ${{ secrets.NUGET_API_KEY }}
+      #          --source https://api.nuget.org/v3/index.json --skip-duplicate

@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: build & test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # ubuntu-24.04-arm is a real arm64 runner: it validates the linux-arm64
+        # netcoredbg + ClrMD path on hardware (not emulation). windows-arm64 is not
+        # covered — netcoredbg ships no win-arm64 build.
+        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      # netcoredbg is fetched at build time (pinned + SHA-256 verified); cache it
+      # so each run downloads at most once per version.
+      - name: Cache netcoredbg
+        uses: actions/cache@v4
+        with:
+          path: tools/netcoredbg
+          # runner.arch keeps the x64 and arm64 Linux caches separate (the binary differs).
+          key: netcoredbg-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Directory.Build.props') }}
+
+      # Sample targets are launched as external processes by the integration tests,
+      # so build them explicitly (they are not project references of the test app).
+      - name: Build sample targets
+        run: |
+          dotnet build samples/SampleApp/SampleApp.csproj -c Release
+          dotnet build samples/ParentApp/ParentApp.csproj -c Release
+
+      # Builds the server (triggers the netcoredbg fetch) and runs the full suite,
+      # including the integration tests that drive a real netcoredbg + ClrMD.
+      - name: Test
+        run: dotnet test tests/ClrVoyant.Tests/ClrVoyant.Tests.csproj -c Release

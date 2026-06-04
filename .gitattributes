@@ -1,0 +1,24 @@
+# Line-ending normalization. This repo is cross-platform: developed on Windows,
+# but built/run on Linux (the POD sidecar, the Docker image, and CI ubuntu).
+# Let Git decide text vs binary and store text as LF in the repository.
+* text=auto
+
+# Shell scripts MUST be LF — the Dockerfile and the Linux spike run them under
+# bash, which breaks on CRLF (`\r` makes the shebang/commands unparseable).
+*.sh    text eol=lf
+
+# Windows-side scripts stay CRLF.
+*.ps1   text eol=crlf
+*.cmd   text eol=crlf
+*.bat   text eol=crlf
+
+# Known-binary types: never apply EOL conversion and don't try to diff them.
+*.zip   binary
+*.tar.gz binary
+*.dll   binary
+*.exe   binary
+*.pdb   binary
+*.so    binary
+*.png   binary
+*.jpg   binary
+*.ico   binary

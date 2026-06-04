@@ -1,0 +1,50 @@
+<Project>
+
+  <!-- Common settings for every project in the repo (auto-imported by MSBuild).
+       Individual projects may still override any of these. -->
+  <PropertyGroup>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+
+    <!-- Fail the build on any warning, so warnings can't quietly accumulate. CI
+         pins the SDK (setup-dotnet 8.0.x), so the analyzer set is stable there;
+         an SDK bump that surfaces new warnings is a deliberate, fixable event. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+
+    <!-- Authorship / packaging metadata (applies if a project opts into packing).
+         Most projects are not packable; the deliverable is ClrVoyant.Server. -->
+    <Authors>Matteo Panzacchi</Authors>
+    <Product>ClrVoyant</Product>
+    <Copyright>Copyright (c) 2026 Matteo Panzacchi</Copyright>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/matejo-dev/ClrVoyant</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/matejo-dev/ClrVoyant.git</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <!-- netcoredbg is fetched at build time (pinned + SHA-256 verified) by the
+       FetchNetcoredbg target in ClrVoyant.Server. This is the SINGLE SOURCE OF
+       TRUTH for the version/hashes; keep tools/fetch-netcoredbg.* and the spike
+       scripts in sync with it. -->
+  <PropertyGroup Label="netcoredbg">
+    <NetcoredbgVersion>3.1.3-1062</NetcoredbgVersion>
+    <!-- Per-OS/arch pinned SHA-256 of the upstream asset. Supported targets:
+         win-x64, linux-x64, linux-arm64 (netcoredbg ships no win-arm64/osx for us). -->
+    <NetcoredbgSha256Windows>c67ae052e0bcb9ce37000f261e2d397a0d5b6615cafe30c868239a78598dfb37</NetcoredbgSha256Windows>
+    <NetcoredbgSha256Linux>3814341c028c81ff7eea03ac316ad92e9ad7d705d2a00e3e3df269cdc241c763</NetcoredbgSha256Linux>
+    <NetcoredbgSha256LinuxArm64>fc9efb691a53932a7fac4b9f67af68ad0c2a4cbe59cb2c1a3c44c64959df2ba4</NetcoredbgSha256LinuxArm64>
+    <RepoToolsDir>$(MSBuildThisFileDirectory)tools</RepoToolsDir>
+    <NetcoredbgCacheDir>$(RepoToolsDir)\netcoredbg</NetcoredbgCacheDir>
+    <!-- Architecture of the current build process. The build-time fetch bundles the
+         engine for THIS arch (an emulated arm64 container build reports Arm64), and
+         the runtime fetch keys off the running process arch the same way. -->
+    <NetcoredbgArch>$([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture)</NetcoredbgArch>
+    <NetcoredbgExeName Condition="$([MSBuild]::IsOSPlatform('Windows'))">netcoredbg.exe</NetcoredbgExeName>
+    <NetcoredbgExeName Condition="!$([MSBuild]::IsOSPlatform('Windows'))">netcoredbg</NetcoredbgExeName>
+    <NetcoredbgSha256 Condition="$([MSBuild]::IsOSPlatform('Windows'))">$(NetcoredbgSha256Windows)</NetcoredbgSha256>
+    <NetcoredbgSha256 Condition="!$([MSBuild]::IsOSPlatform('Windows')) And '$(NetcoredbgArch)' == 'Arm64'">$(NetcoredbgSha256LinuxArm64)</NetcoredbgSha256>
+    <NetcoredbgSha256 Condition="!$([MSBuild]::IsOSPlatform('Windows')) And '$(NetcoredbgArch)' != 'Arm64'">$(NetcoredbgSha256Linux)</NetcoredbgSha256>
+  </PropertyGroup>
+
+</Project>

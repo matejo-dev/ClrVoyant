@@ -1,0 +1,26 @@
+<Project>
+
+  <!-- Central Package Management: every NuGet version is pinned here, once, for
+       all projects. Project files reference packages WITHOUT a Version attribute.
+       This is the file you edit to bump a dependency. -->
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+
+  <ItemGroup Label="Product">
+    <PackageVersion Include="Microsoft.Diagnostics.Runtime" Version="3.1.512801" />
+    <PackageVersion Include="Microsoft.Diagnostics.NETCore.Client" Version="0.2.661903" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.8" />
+    <PackageVersion Include="ModelContextProtocol" Version="1.3.0" />
+    <PackageVersion Include="ModelContextProtocol.AspNetCore" Version="1.3.0" />
+    <PackageVersion Include="System.Management" Version="10.0.8" />
+  </ItemGroup>
+
+  <ItemGroup Label="Test">
+    <PackageVersion Include="coverlet.collector" Version="10.0.1" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
+    <PackageVersion Include="xunit" Version="2.5.3" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="2.5.3" />
+  </ItemGroup>
+
+</Project>

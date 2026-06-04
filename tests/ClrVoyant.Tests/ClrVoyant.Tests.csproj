@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <!-- No PlatformTarget pin (AnyCPU): tests run at the host architecture, so the
+         in-process ClrMD inspector matches the target the integration tests launch
+         (which is built for the same host). Supported: x64 and arm64. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\ClrVoyant.Core\ClrVoyant.Core.csproj" />
+    <ProjectReference Include="..\..\src\ClrVoyant.Dap\ClrVoyant.Dap.csproj" />
+    <ProjectReference Include="..\..\src\ClrVoyant.Inspection\ClrVoyant.Inspection.csproj" />
+    <ProjectReference Include="..\..\src\ClrVoyant.Server\ClrVoyant.Server.csproj" />
+  </ItemGroup>
+
+</Project>

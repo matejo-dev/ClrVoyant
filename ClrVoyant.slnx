@@ -1,0 +1,15 @@
+<Solution>
+  <Folder Name="/samples/">
+    <Project Path="samples/ParentApp/ParentApp.csproj" />
+    <Project Path="samples/SampleApp/SampleApp.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/ClrVoyant.Core/ClrVoyant.Core.csproj" />
+    <Project Path="src/ClrVoyant.Dap/ClrVoyant.Dap.csproj" />
+    <Project Path="src/ClrVoyant.Inspection/ClrVoyant.Inspection.csproj" />
+    <Project Path="src/ClrVoyant.Server/ClrVoyant.Server.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/ClrVoyant.Tests/ClrVoyant.Tests.csproj" />
+  </Folder>
+</Solution>
