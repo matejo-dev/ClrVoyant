@@ -35,6 +35,16 @@ add: a **function breakpoint** binding and hitting `Calc.Compute` with no source
 (the no-source path), and a rejected `debug_attach` surfacing netcoredbg's real error
 (not a hang or a generic message).
 
+### Symbols boundary (`OptimizedBuildTests`, `NoPdbDebuggingTests`)
+Two tests pin down what actually gates debugging — the PDB, not Debug-vs-Release:
+- `OptimizedBuildTests` builds SampleApp with `Optimize=true` and proves a line
+  breakpoint still binds at the right line and locals are readable — netcoredbg
+  disables JIT optimization on module load, so an optimized build with a PDB debugs
+  cleanly.
+- `NoPdbDebuggingTests` strips the PDB and proves neither a function nor a source
+  breakpoint binds (so a resume never stops): the no-symbols boundary. The ClrMD
+  heap/`Task` view still works after a `pause` (it reads runtime metadata, no PDB).
+
 ### Packaging tests (opt-in: `CLRVOYANT_PACKAGING_TESTS=1`)
 `InstalledToolTests` is the end-to-end check of the **shipped artifact**: it packs
 the tool, installs it from a local folder feed, then drives a real debug loop

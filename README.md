@@ -200,7 +200,8 @@ Tests run in a `testhost` process. Use `debug_test(testProject, testName?)` — 
 runs `dotnet test` with `VSTEST_HOST_DEBUG=1` (so the host suspends and announces
 its PID), parses that PID and attaches in one step; set breakpoints right after it
 returns and execution resumes into them. The `dotnet test` driver is killed when
-you `debug_stop` the session. Build the tests in **Debug** for symbols and locals.
+you `debug_stop` the session. Build the tests with a PDB — **Debug** is safest for
+full locals (an optimized build with a PDB works too).
 
 Under the hood this automates the manual recipe (kept here for reference):
 `$env:VSTEST_HOST_DEBUG=1; dotnet test <project> -c Debug` prints `Process Id: NNNN`
@@ -234,12 +235,16 @@ Fuller breakdown with sources: [docs/comparison.md](docs/comparison.md).
   debugger (*Start Without Debugging* / Ctrl+F5 / `dotnet run`), or detach the IDE
   first (VS: *Debug → Detach All*, which leaves the app running). This is an
   OS/runtime constraint, not a ClrVoyant limitation.
-- **Optimized (Release) builds degrade line-level debugging.** With optimizations
-  on, the JIT reorders and elides code, so line breakpoints may not bind where you
-  expect and locals can read as unavailable — a universal debugger limitation, not
-  specific to ClrVoyant. For reliable line breakpoints and locals, build the target
-  **unoptimized** (Debug, or `<Optimize>false</Optimize>`) and ship its **PDBs**.
-  Attach, call stacks, `evaluate`, and the async `Task`/heap view work regardless.
+- **A PDB — not Debug-vs-Release — is what gates breakpoints and locals.** netcoredbg
+  disables JIT optimization on module load, so an assembly compiled with optimizations
+  ON still debugs cleanly **as long as it ships a PDB**: breakpoints bind, stepping
+  works, and locals are readable (the test suite verifies this against an optimized
+  build). With **no PDB** (DLLs/EXE only) netcoredbg cannot place breakpoints at all —
+  neither by line nor by method name; `pause` into the target and use the ClrMD
+  `Task`/heap view instead (it reads runtime metadata, so it needs no PDB). Residual
+  caveat: the *compiler* can still drop genuinely-dead locals or fold constants at the
+  IL level, and `[MethodImpl(AggressiveInlining)]` / cross-assembly inlining moves
+  code — those won't reappear; ordinary used locals and method frames stay visible.
 - Child-process auto-attach (`set_auto_attach`) discovers children by parent PID
   **without suspending them**, so a child's very first startup instants may run
   before the debugger attaches. Suspend-at-startup (tier 3) is not yet implemented.

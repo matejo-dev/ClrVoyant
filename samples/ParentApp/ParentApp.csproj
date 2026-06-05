@@ -5,8 +5,8 @@
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <!-- Debug TARGET for the integration tests: keep it debug-friendly in every
-         configuration so breakpoints bind (see SampleApp.csproj for the rationale). -->
+    <!-- Debug TARGET for the integration tests: kept UNOPTIMIZED for deterministic
+         test lines/locals (see SampleApp.csproj for the full rationale). -->
     <Optimize>false</Optimize>
     <DebugType>portable</DebugType>
     <DebugSymbols>true</DebugSymbols>

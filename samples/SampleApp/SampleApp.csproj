@@ -5,11 +5,13 @@
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <!-- This app exists only to be a debug TARGET for the integration tests. Keep
-         it debug-friendly in EVERY configuration: no optimization (so the JIT
-         doesn't move/elide the breakpoint line) and portable PDBs (source lines).
-         Without this, a Release build makes breakpoints miss and the tests that
-         require a stopped target fail ("Running, not stopped"). -->
+    <!-- This app exists only to be a debug TARGET for the integration tests. We keep
+         it UNOPTIMIZED in every configuration so the lines and locals the suite
+         asserts on are deterministic (no compiler dead-local elision / constant
+         folding) — a test-fixture choice, NOT because Release is undebuggable. It IS
+         debuggable: netcoredbg disables JIT optimization on module load, so an
+         optimized build that ships a PDB still binds breakpoints and exposes locals
+         (proven by OptimizedBuildTests). Portable PDBs give the source-line map. -->
     <Optimize>false</Optimize>
     <DebugType>portable</DebugType>
     <DebugSymbols>true</DebugSymbols>

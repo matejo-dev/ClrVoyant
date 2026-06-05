@@ -53,7 +53,8 @@ public static class DebugTools
         GOTCHAS
         - Introspection (threads/callstack/variables/tasks) requires the target STOPPED.
         - continue/step already block until the next stop; don't poll.
-        - Build the target in Debug for locals and symbols.
+        - Breakpoints and locals need a PDB next to the .dll; Debug is the safest
+          build, but an optimized (Release) build with a PDB also works.
         - evaluate() can mutate state (it runs getters/methods) — treat as dangerous.
         - To debug unit tests use debug_test(testProject, testName?) — it runs
           'dotnet test' suspended and attaches in one step. Set breakpoints right
@@ -93,12 +94,12 @@ public static class DebugTools
         => AssemblyMethodScanner.ListMethods(assemblyPath, typeFilter, methodFilter, max);
 
     [McpServerTool(Name = "debug_test")]
-    [Description("Debug a unit test in one step: runs 'dotnet test' on the project with the test host suspended, then attaches a session to it. Set breakpoints right after this returns — execution resumes and hits them. Build the test project in Debug for symbols. The 'dotnet test' process is killed when you debug_stop the session.")]
+    [Description("Debug a unit test in one step: runs 'dotnet test' on the project with the test host suspended, then attaches a session to it. Set breakpoints right after this returns — execution resumes and hits them. Build the test project with a PDB (Debug is safest for full locals). The 'dotnet test' process is killed when you debug_stop the session.")]
     public static Task<SessionInfo> DebugTest(
         TestDebugLauncher launcher,
         [Description("Path to the test project (.csproj) or its directory.")] string testProject,
         [Description("Optional test filter (passed to 'dotnet test --filter'), e.g. a test or class name. Omit to debug the whole project.")] string? testName = null,
-        [Description("Build configuration; must be Debug for usable symbols/locals.")] string configuration = "Debug",
+        [Description("Build configuration; Debug is safest for full locals (what's actually required is a PDB).")] string configuration = "Debug",
         [Description("Max time to wait for the test host to come up, milliseconds.")] int timeoutMs = 120000)
         => launcher.LaunchAndAttachAsync(testProject, testName, configuration, TimeSpan.FromMilliseconds(timeoutMs));
 
