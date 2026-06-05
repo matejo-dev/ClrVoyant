@@ -20,7 +20,9 @@ RUN dotnet publish src/ClrVoyant.Server/ClrVoyant.Server.csproj -c Release -o /a
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
 WORKDIR /app
 COPY --from=build /app .
-RUN chmod +x /app/tools/netcoredbg/netcoredbg
+# Publish bundles netcoredbg per-RID under tools/netcoredbg/<rid>/; make the Linux
+# launcher(s) executable (the glob also tolerates a single-RID layout).
+RUN chmod +x /app/tools/netcoredbg/*/netcoredbg 2>/dev/null || chmod +x /app/tools/netcoredbg/netcoredbg
 
 ENV CLRVOYANT_TRANSPORT=http \
     CLRVOYANT_HTTP_URL=http://0.0.0.0:3001

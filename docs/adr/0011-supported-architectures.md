@@ -45,12 +45,15 @@ Support three host/target architectures, each tool instance matching its target:
   ptrace path before the breakpoint/heap-read step — a known emulation limitation,
   not an arm64 verdict. Treat `linux-arm64` as supported once the arm64 CI leg is
   green; until then it is "wired up, pending hardware validation".
-- A single dotnet-tool package stays cross-platform; the per-OS/arch native engine
-  arrives via the first-run fetch, so no per-arch package is needed.
-- Caveat: cross-publishing arm64 from an x64 host *without* emulation
-  (`dotnet publish -r linux-arm64` on x64) would bundle the x64 engine, because the
-  build-time fetch keys off the build process arch. The container build avoids this
-  by building inside the target-arch (buildx) image.
+- A single dotnet-tool package stays cross-platform AND offline: publish/pack bundle
+  the engine for **all three RIDs** under `tools/netcoredbg/<rid>/` (staged with
+  built-in MSBuild tasks at publish time), and `NetcoredbgLocator` picks the host's.
+  The first-run fetch is only a last-resort fallback. See [ADR-0006](0006-bundle-netcoredbg.md).
+- This also fixes the earlier cross-publish hazard: because every RID is staged
+  regardless of the build host's architecture, `dotnet publish`/`pack` from an x64
+  host no longer bundles the wrong (x64) engine for an arm64 target. The container
+  image still builds inside the target-arch (buildx) image for the rest of its
+  payload, but the engine bundle is correct either way.
 
 ## Alternatives considered
 

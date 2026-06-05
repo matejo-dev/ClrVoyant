@@ -25,6 +25,7 @@ public interface IDebugEngine : IAsyncDisposable
 
     // --- Breakpoints ---
     Task<IReadOnlyList<Breakpoint>> SetBreakpointsAsync(string file, IReadOnlyList<BreakpointRequest> breakpoints, CancellationToken ct = default);
+    Task<IReadOnlyList<FunctionBreakpoint>> SetFunctionBreakpointsAsync(IReadOnlyList<FunctionBreakpointRequest> breakpoints, CancellationToken ct = default);
     Task SetExceptionBreakpointsAsync(IReadOnlyList<string> filters, CancellationToken ct = default);
 
     // --- Execution control (send only) ---

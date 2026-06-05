@@ -52,6 +52,10 @@ Concrete scenarios it delivers today (Windows or Linux, .NET 8/9/10):
 - **Debug several processes at once** — multi-session, with `wait_for_any_stop`
   to orchestrate stops that arrive asynchronously; optional child-process
   auto-attach for parents that spawn workers.
+- **Debug without source** — only have a deployed build's DLLs + PDBs, not the
+  `.cs`? `list_methods` reads the assembly metadata to find method names, then
+  `set_function_breakpoint("Namespace.Type.Method")` binds straight from the PDB —
+  no source file needed. Attach/call stack/variables/Tasks all work the same.
 - **Debug inside a container / Kubernetes POD** — run it as an authenticated
   HTTP sidecar co-located with the target (PDBs required); only the agent is
   remote, the engine stays local to the process.
@@ -70,8 +74,10 @@ Concrete scenarios it delivers today (Windows or Linux, .NET 8/9/10):
 ## Install
 
 The cleanest way is as a **.NET global tool** — you get a `clrvoyant` command on
-your PATH, so client config never points at a build folder. netcoredbg is fetched
-once (pinned + SHA-256 verified) on first run.
+your PATH, so client config never points at a build folder. The published package
+**bundles netcoredbg for every supported RID** (pinned + SHA-256 verified at build
+time) and the tool picks the one matching your host, so it installs and runs
+**offline** with no runtime download — only a missing-bundle fallback fetches.
 
 ```pwsh
 # From a published package (once it's on NuGet):
@@ -158,6 +164,11 @@ stop and return the new location)
 - `set_breakpoint(file, line?, content?, condition?, hitCondition?, logMessage?)` —
   prefer `content` (the source text of the line) over a raw `line`: it survives
   line-number drift; `line` then only disambiguates duplicate matches
+- `set_function_breakpoint(functionName, condition?, hitCondition?)` — break by
+  method name (`Method` / `Type.Method` / `Namespace.Type.Method`), no source line;
+  binds from the PDB, so it's the **no-source** path. `list_function_breakpoints()`
+- `list_methods(assemblyPath, typeFilter?, methodFilter?)` — discover method names
+  in a built `.dll` (static metadata read, no process) to feed `set_function_breakpoint`
 - `remove_breakpoint(bpId)`, `clear_all_breakpoints()`, `list_breakpoints()`,
   `set_exception_breakpoints(filters)`
 - `continue(threadId?, timeoutMs?)`, `step_over` / `step_into` / `step_out`, `pause()`
@@ -216,6 +227,19 @@ Fuller breakdown with sources: [docs/comparison.md](docs/comparison.md).
 
 ## Known limitations
 
+- **One debugger per process.** ClrVoyant can't attach to a process another
+  debugger already owns — e.g. an app started with the Visual Studio / Rider
+  debugger (F5 / *Start Debugging*). A .NET process allows a single debugger
+  (ICorDebug), so the second attach is refused. Run the target **without** the IDE
+  debugger (*Start Without Debugging* / Ctrl+F5 / `dotnet run`), or detach the IDE
+  first (VS: *Debug → Detach All*, which leaves the app running). This is an
+  OS/runtime constraint, not a ClrVoyant limitation.
+- **Optimized (Release) builds degrade line-level debugging.** With optimizations
+  on, the JIT reorders and elides code, so line breakpoints may not bind where you
+  expect and locals can read as unavailable — a universal debugger limitation, not
+  specific to ClrVoyant. For reliable line breakpoints and locals, build the target
+  **unoptimized** (Debug, or `<Optimize>false</Optimize>`) and ship its **PDBs**.
+  Attach, call stacks, `evaluate`, and the async `Task`/heap view work regardless.
 - Child-process auto-attach (`set_auto_attach`) discovers children by parent PID
   **without suspending them**, so a child's very first startup instants may run
   before the debugger attaches. Suspend-at-startup (tier 3) is not yet implemented.
@@ -242,7 +266,7 @@ is high as a by-product, but the point is the behaviours above, not the number. 
 ```
 src/ClrVoyant.Core         models, IDebugEngine, Session, SessionManager
 src/ClrVoyant.Dap          DAP client + DapEngine (netcoredbg)
-src/ClrVoyant.Inspection   ClrMD TaskInspector (Tasks + async graph)
+src/ClrVoyant.Inspection   ClrMD TaskInspector (Tasks + async graph) + method discovery
 src/ClrVoyant.Server       MCP stdio host + tools
 tools/netcoredbg          bundled debug engine (fetched at build)
 samples/SampleApp         a target app for tests

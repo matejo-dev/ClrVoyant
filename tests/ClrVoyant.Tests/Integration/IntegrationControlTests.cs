@@ -33,6 +33,32 @@ public class IntegrationControlTests
     }
 
     [Fact]
+    public async Task Function_breakpoint_binds_and_hits_without_a_source_line()
+    {
+        // The no-source path: break by method name only — no file, no line. netcoredbg
+        // binds it from the PDB and stops inside SampleApp.Compute.
+        var mgr = NewManager();
+        try
+        {
+            await DebugTools.DebugLaunch(mgr, TestPaths.SampleAppDll);
+            var fb = await DebugTools.SetFunctionBreakpoint(mgr, "Calc.Compute");
+            Assert.Equal("Calc.Compute", fb.FunctionName);
+
+            // The proof is the HIT: function breakpoints bind lazily (when the module
+            // loads), so the running target should stop inside Compute, no line given.
+            var outcome = await DebugTools.Continue(mgr, null, 20000);
+            Assert.Equal(SessionState.Stopped, outcome.State);
+
+            var stack = await DebugTools.GetCallstack(mgr, null, 0, 5);
+            Assert.Contains(stack, f => f.Function.Contains("Compute", StringComparison.OrdinalIgnoreCase));
+
+            var listed = await DebugTools.ListFunctionBreakpoints(mgr);
+            Assert.Contains(listed, b => b.Id == fb.Id && b.FunctionName == "Calc.Compute");
+        }
+        finally { await Cleanup(mgr); }
+    }
+
+    [Fact]
     public async Task Step_over_advances_to_next_line()
     {
         var mgr = await StartStoppedAsync();
@@ -115,6 +141,36 @@ public class IntegrationControlTests
             await Cleanup(mgr);
             try { if (!proc.HasExited) proc.Kill(true); } catch { }
         }
+    }
+
+    [Fact(Timeout = 40000)]
+    public async Task Attach_to_a_dead_pid_surfaces_a_real_error()
+    {
+        // Regression guard: a rejected attach used to be fire-and-forget, so its
+        // DapException became an unobserved exception and the caller saw either a
+        // hang or a generic message. The engine must now surface a concrete reason
+        // (netcoredbg's rejection, or a ready-timeout) and never hang.
+        var mgr = NewManager();
+        try
+        {
+            int deadPid = FindUnusedPid();
+            var ex = await Assert.ThrowsAnyAsync<Exception>(() => DebugTools.DebugAttach(mgr, deadPid));
+            Assert.True(ex is DapException or TimeoutException,
+                $"expected a DAP/timeout failure, got {ex.GetType().Name}: {ex.Message}");
+            Assert.False(string.IsNullOrWhiteSpace(ex.Message));
+        }
+        finally { await Cleanup(mgr); }
+    }
+
+    /// <summary>A process id that is not currently in use, so attaching to it must fail.</summary>
+    static int FindUnusedPid()
+    {
+        for (int candidate = 999_000; candidate > 1000; candidate -= 7)
+        {
+            try { using var _ = Process.GetProcessById(candidate); }
+            catch (ArgumentException) { return candidate; } // no such process
+        }
+        throw new InvalidOperationException("could not find an unused pid for the test.");
     }
 
     [Fact]

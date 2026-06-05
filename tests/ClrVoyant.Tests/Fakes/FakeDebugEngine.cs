@@ -62,6 +62,17 @@ public sealed class FakeDebugEngine : IDebugEngine
         return Task.FromResult(result);
     }
 
+    public List<IReadOnlyList<FunctionBreakpointRequest>> SetFunctionBreakpointCalls { get; } = new();
+
+    public Task<IReadOnlyList<FunctionBreakpoint>> SetFunctionBreakpointsAsync(IReadOnlyList<FunctionBreakpointRequest> breakpoints, CancellationToken ct = default)
+    {
+        SetFunctionBreakpointCalls.Add(breakpoints);
+        IReadOnlyList<FunctionBreakpoint> result = breakpoints
+            .Select((b, i) => new FunctionBreakpoint(i + 1, true, b.FunctionName, "F.cs", 10))
+            .ToList();
+        return Task.FromResult(result);
+    }
+
     public Task SetExceptionBreakpointsAsync(IReadOnlyList<string> filters, CancellationToken ct = default)
     {
         ExceptionFilters = filters.ToList();

@@ -35,7 +35,7 @@
     <ToolCommandName>clrvoyant</ToolCommandName>
     <PackageId>ClrVoyant</PackageId>
     <IsPackable>true</IsPackable>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <Description>A local MCP server that lets an agent debug .NET 8/9/10 apps headlessly — breakpoints, stepping, variables, and full async Task introspection (the "Tasks window" via ClrMD).</Description>
     <PackageTags>mcp;debugger;dotnet;netcoredbg;clrmd;async;tasks</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
@@ -82,13 +82,69 @@
           SkipUnchangedFiles="true" />
   </Target>
 
-  <Target Name="BundleNetcoredbgToPublish" AfterTargets="Publish" DependsOnTargets="FetchNetcoredbg">
+  <!-- Publish/pack bundle the engine for EVERY supported RID under
+       tools/netcoredbg/<rid>/, so the .NET global tool works offline on any
+       supported host with no runtime download (NetcoredbgLocator picks the
+       matching <rid>). The non-host RIDs are downloaded here at publish time
+       (SHA-256 verified) using only built-in MSBuild tasks — no PowerShell/bash —
+       so it also runs inside the dotnet/sdk container image. This is build-time
+       network access (CI / the packager), never the end user's machine. -->
+  <Target Name="StageNetcoredbgRidsToPublish" AfterTargets="Publish">
+    <MSBuild Projects="$(MSBuildThisFileFullPath)" Targets="StageOneNetcoredbgRid"
+             Properties="StageRid=win-x64;StageAsset=netcoredbg-win64.zip;StageSha=$(NetcoredbgSha256Windows);StageExe=netcoredbg.exe;StageIsZip=true;StageDestRoot=$(PublishDir)tools/netcoredbg" />
+    <MSBuild Projects="$(MSBuildThisFileFullPath)" Targets="StageOneNetcoredbgRid"
+             Properties="StageRid=linux-x64;StageAsset=netcoredbg-linux-amd64.tar.gz;StageSha=$(NetcoredbgSha256Linux);StageExe=netcoredbg;StageIsZip=false;StageDestRoot=$(PublishDir)tools/netcoredbg" />
+    <MSBuild Projects="$(MSBuildThisFileFullPath)" Targets="StageOneNetcoredbgRid"
+             Properties="StageRid=linux-arm64;StageAsset=netcoredbg-linux-arm64.tar.gz;StageSha=$(NetcoredbgSha256LinuxArm64);StageExe=netcoredbg;StageIsZip=false;StageDestRoot=$(PublishDir)tools/netcoredbg" />
+
+    <!-- Drop the single-RID flat copy that the build-output bundle leaves in publish:
+         the package ships the per-RID layout only (no redundant host-RID duplicate).
+         '*' matches top-level files but does not recurse into the <rid>/ subdirs. -->
     <ItemGroup>
-      <_Netcoredbg Include="$(NetcoredbgCacheDir)\**\*" />
+      <_FlatNetcoredbg Include="$(PublishDir)tools/netcoredbg/*" />
     </ItemGroup>
-    <Copy SourceFiles="@(_Netcoredbg)"
-          DestinationFiles="@(_Netcoredbg->'$(PublishDir)tools\netcoredbg\%(RecursiveDir)%(Filename)%(Extension)')"
-          SkipUnchangedFiles="true" />
+    <Delete Files="@(_FlatNetcoredbg)" />
+  </Target>
+
+  <!-- Stage one RID's netcoredbg into $(StageDestRoot)/$(StageRid)/. Idempotent:
+       skips entirely if the binary is already present. Parametrized via the MSBuild
+       task above so the download/verify/extract logic lives in exactly one place. -->
+  <Target Name="StageOneNetcoredbgRid"
+          Condition="!Exists('$(StageDestRoot)/$(StageRid)/$(StageExe)')">
+    <PropertyGroup>
+      <_StageTmp>$(IntermediateOutputPath)ncdbg-stage/$(StageRid)</_StageTmp>
+      <_StageUrl>https://github.com/Samsung/netcoredbg/releases/download/$(NetcoredbgVersion)/$(StageAsset)</_StageUrl>
+    </PropertyGroup>
+    <RemoveDir Directories="$(_StageTmp)" />
+    <MakeDir Directories="$(_StageTmp)" />
+
+    <DownloadFile SourceUrl="$(_StageUrl)" DestinationFolder="$(_StageTmp)" Retries="3">
+      <Output TaskParameter="DownloadedFile" PropertyName="_StageArchive" />
+    </DownloadFile>
+
+    <GetFileHash Files="$(_StageArchive)" Algorithm="SHA256">
+      <Output TaskParameter="Hash" PropertyName="_StageGotSha" />
+    </GetFileHash>
+    <!-- MSBuild '==' on strings is case-insensitive, so hex-case differences are fine. -->
+    <Error Condition="'$(_StageGotSha)' != '$(StageSha)'"
+           Text="netcoredbg checksum mismatch for $(StageAsset): expected $(StageSha), got $(_StageGotSha)." />
+
+    <!-- .zip via the built-in Unzip task; .tar.gz via tar (present on Windows 10+,
+         Linux, and the dotnet SDK image — there is no built-in tar MSBuild task).
+         tar's -C target must exist first; Unzip creates its destination itself. -->
+    <MakeDir Directories="$(_StageTmp)/x" />
+    <Unzip Condition="'$(StageIsZip)' == 'true'" SourceFiles="$(_StageArchive)" DestinationFolder="$(_StageTmp)/x" />
+    <Exec Condition="'$(StageIsZip)' != 'true'" Command="tar -xzf &quot;$(_StageArchive)&quot; -C &quot;$(_StageTmp)/x&quot;" />
+
+    <!-- The upstream archive nests everything under a netcoredbg/ folder; promote its
+         contents to tools/netcoredbg/<rid>/ where the locator looks. -->
+    <ItemGroup>
+      <_StageFiles Include="$(_StageTmp)/x/netcoredbg/**/*" />
+    </ItemGroup>
+    <Error Condition="'@(_StageFiles)' == ''" Text="netcoredbg/ folder not found inside $(StageAsset)." />
+    <Copy SourceFiles="@(_StageFiles)"
+          DestinationFiles="@(_StageFiles->'$(StageDestRoot)/$(StageRid)/%(RecursiveDir)%(Filename)%(Extension)')" />
+    <RemoveDir Directories="$(_StageTmp)" />
   </Target>
 
 </Project>

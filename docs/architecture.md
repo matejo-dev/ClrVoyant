@@ -41,9 +41,9 @@ flowchart LR
 |---|---|
 | `ClrVoyant.Core` | Models/DTOs, `IDebugEngine`, `Session`, `SessionManager`, `BreakpointLocator`. No engine or FS specifics — pure, testable. |
 | `ClrVoyant.Dap` | `DapClient` (DAP framing, request/response correlation, event pump) + `DapEngine` (`IDebugEngine` over netcoredbg). |
-| `ClrVoyant.Inspection` | `TaskInspector` — ClrMD heap read, Task status decoding, async-state-machine walking, graph reconstruction. |
-| `ClrVoyant.Server` | MCP host: tool surface (`DebugTools`), transports (stdio/HTTP), DI wiring (`HostFactory`), `NetcoredbgLocator` + `NetcoredbgFetcher` (first-run, per-OS/arch engine fetch), `ChildProcessWatcher`, `ProcessLister`, `TestDebugLauncher`. |
-| `tools/netcoredbg` | Bundled engine ([ADR-0006](adr/0006-bundle-netcoredbg.md)). |
+| `ClrVoyant.Inspection` | `TaskInspector` — ClrMD heap read, Task status decoding, async-state-machine walking, graph reconstruction. `AssemblyMethodScanner` — static metadata read for no-source method discovery. |
+| `ClrVoyant.Server` | MCP host: tool surface (`DebugTools`), transports (stdio/HTTP), DI wiring (`HostFactory`), `NetcoredbgLocator` (per-RID/flat bundle) + `NetcoredbgFetcher` (fallback per-OS/arch engine fetch), `ChildProcessWatcher`, `ProcessLister`, `TestDebugLauncher`. |
+| `tools/netcoredbg` | Bundled engine, all RIDs in the package ([ADR-0006](adr/0006-bundle-netcoredbg.md)). |
 | `samples/SampleApp`, `samples/ParentApp` | Targets for tests/demos. |
 | `spike/` | The de-risking proofs (Windows coexistence, and `spike/linux/` for the Linux/POD risk). |
 

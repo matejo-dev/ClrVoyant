@@ -32,6 +32,9 @@ public static class DebugTools
         2. set_breakpoint(file, content=<source text of the line>) — prefer 'content'
            over a raw line number; it survives miscounts and line drift. Use a 'line'
            hint only to disambiguate when the same text appears more than once.
+           NO SOURCE? Use set_function_breakpoint("Namespace.Type.Method") — it binds
+           from the PDB alone, so it's how you break in a deployed build you have the
+           DLLs + PDBs for but not the .cs.
         3. continue() — BLOCKS until the next stop and returns the new location. So do
            step_over / step_into / step_out. No separate "wait" call after them.
         4. At a stop: get_callstack -> get_scopes(frameId) -> get_variables(ref). Walk
@@ -79,6 +82,15 @@ public static class DebugTools
     public static IReadOnlyList<ProcessInfo> ListProcesses(
         [Description("List only .NET (Core) processes. Set false to list every process.")] bool dotnetOnly = true)
         => ProcessLister.List(dotnetOnly);
+
+    [McpServerTool(Name = "list_methods")]
+    [Description("Discover methods in a built assembly by reading its metadata statically — no running process or source needed. Use it for the no-source case: point at a deployed .dll, filter by type/method name, then pass a returned FullName ('Namespace.Type.Method') straight to set_function_breakpoint. Compiler-generated members are omitted.")]
+    public static IReadOnlyList<MethodSymbol> ListMethods(
+        [Description("Full path to the assembly (.dll) to scan.")] string assemblyPath,
+        [Description("Optional case-insensitive substring to filter the declaring type name.")] string? typeFilter = null,
+        [Description("Optional case-insensitive substring to filter the method name.")] string? methodFilter = null,
+        [Description("Maximum number of methods to return.")] int max = 200)
+        => AssemblyMethodScanner.ListMethods(assemblyPath, typeFilter, methodFilter, max);
 
     [McpServerTool(Name = "debug_test")]
     [Description("Debug a unit test in one step: runs 'dotnet test' on the project with the test host suspended, then attaches a session to it. Set breakpoints right after this returns — execution resumes and hits them. Build the test project in Debug for symbols. The 'dotnet test' process is killed when you debug_stop the session.")]
@@ -167,6 +179,21 @@ public static class DebugTools
         return sessions.Resolve(sessionId).AddBreakpointAsync(file, new BreakpointRequest(targetLine, condition, hitCondition, logMessage));
     }
 
+    [McpServerTool(Name = "set_function_breakpoint")]
+    [Description("Set a breakpoint on a METHOD by name — no source file or line needed. Binds straight from the PDB, so it's the way to break in code you don't have the .cs for (a deployed build with PDBs + DLLs). Match by 'Method', 'Type.Method', or 'Namespace.Type.Method'; qualify it when the name is ambiguous. Returns its id, verified state, and the resolved file/line when symbols map one.")]
+    public static Task<FunctionBreakpoint> SetFunctionBreakpoint(
+        SessionManager sessions,
+        [Description("Method to break on: 'Method', 'Type.Method', or 'Namespace.Type.Method'.")] string functionName,
+        [Description("Optional condition expression; breaks only when true.")] string? condition = null,
+        [Description("Optional hit condition, e.g. '>=3'.")] string? hitCondition = null,
+        string? sessionId = null)
+        => sessions.Resolve(sessionId).AddFunctionBreakpointAsync(new FunctionBreakpointRequest(functionName, condition, hitCondition));
+
+    [McpServerTool(Name = "list_function_breakpoints")]
+    [Description("List all function (method-name) breakpoints in the session with their verified state and resolved file/line.")]
+    public static Task<IReadOnlyList<FunctionBreakpoint>> ListFunctionBreakpoints(SessionManager sessions, string? sessionId = null)
+        => sessions.Resolve(sessionId).ListFunctionBreakpointsAsync();
+
     [McpServerTool(Name = "remove_breakpoint")]
     [Description("Remove a breakpoint by its id. Returns true if it existed.")]
     public static Task<bool> RemoveBreakpoint(
@@ -181,7 +208,7 @@ public static class DebugTools
         => sessions.Resolve(sessionId).ListBreakpointsAsync();
 
     [McpServerTool(Name = "clear_all_breakpoints")]
-    [Description("Remove every breakpoint in the session across all files in one call. Returns how many were cleared.")]
+    [Description("Remove every breakpoint in the session — all source breakpoints across all files AND all function breakpoints — in one call. Returns how many were cleared.")]
     public static async Task<string> ClearAllBreakpoints(SessionManager sessions, string? sessionId = null)
     {
         int n = await sessions.Resolve(sessionId).ClearBreakpointsAsync();

@@ -1,6 +1,6 @@
 # Tool reference
 
-The complete MCP tool surface — **31 tools**. The source of truth is the
+The complete MCP tool surface — **34 tools**. The source of truth is the
 `[Description]` on each tool in
 [`DebugTools.cs`](../src/ClrVoyant.Server/Tools/DebugTools.cs) (what the agent
 actually reads); this page groups and explains them.
@@ -38,9 +38,12 @@ actually reads); this page groups and explains them.
 | Tool | Signature | Notes |
 |---|---|---|
 | `set_breakpoint` | `(file, line?, content?, condition?, hitCondition?, logMessage?)` | Prefer `content` (the source text of the line) over a raw `line`: it survives line drift; `line` then only disambiguates duplicate matches. |
-| `remove_breakpoint` | `(bpId)` | Returns true if it existed. |
-| `clear_all_breakpoints` | `()` | Remove every breakpoint across all files. |
-| `list_breakpoints` | `()` | All breakpoints with verified state and line. |
+| `set_function_breakpoint` | `(functionName, condition?, hitCondition?)` | Break on a **method by name** (`Method` / `Type.Method` / `Namespace.Type.Method`) — no source line. Binds from the PDB, so it's the **no-source** path (deployed DLLs + PDBs). Returns the resolved file/line when symbols map one. |
+| `list_function_breakpoints` | `()` | All function breakpoints with verified state and resolved file/line. |
+| `list_methods` | `(assemblyPath, typeFilter?, methodFilter?, max=200)` | Discover method names in a built `.dll` by reading metadata statically (no running process). Each `FullName` is ready to pass to `set_function_breakpoint`. Compiler-generated members are omitted. |
+| `remove_breakpoint` | `(bpId)` | Returns true if it existed (source or function breakpoint). |
+| `clear_all_breakpoints` | `()` | Remove every breakpoint — all source breakpoints and all function breakpoints. |
+| `list_breakpoints` | `()` | All *source* breakpoints with verified state and line (function breakpoints: `list_function_breakpoints`). |
 | `set_exception_breakpoints` | `(filters)` | e.g. `["user-unhandled"]`, `["all"]`; empty to disable. |
 | `continue` | `(threadId?, timeoutMs=30000)` | Resume, block until next stop. |
 | `step_over` / `step_into` / `step_out` | `(threadId?, timeoutMs=30000)` | Step, block until stopped. |

@@ -12,7 +12,7 @@ the deeper reference.
 | Document | What it covers |
 |---|---|
 | [architecture.md](architecture.md) | The system as built: projects, the two-engine design, wait-based model, cross-OS heap read, transports. |
-| [tools.md](tools.md) | Complete reference of the 31 MCP tools, grouped, with parameters and semantics. |
+| [tools.md](tools.md) | Complete reference of the 34 MCP tools, grouped, with parameters and semantics. |
 | [comparison.md](comparison.md) | Honest "what you get / what you give up" vs other MCP debuggers. |
 | [remote-debugging-pod.md](remote-debugging-pod.md) | How Docker/Kubernetes debugging works (the two-link model, sidecar, end-to-end flow). |
 | [security.md](security.md) | Threat model and controls — required reading before exposing HTTP. |

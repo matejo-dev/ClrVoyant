@@ -43,6 +43,10 @@ jobs:
           dotnet build samples/ParentApp/ParentApp.csproj -c Release
       - name: Test
         run: dotnet test tests/ClrVoyant.Tests/ClrVoyant.Tests.csproj -c Release
+        env:
+          # Also validate the installed-tool debug loop offline before shipping an
+          # immutable version (covers the linux-x64 bundle on this runner).
+          CLRVOYANT_PACKAGING_TESTS: '1'
 
       # Tag vX.Y.Z -> package version X.Y.Z (strip the leading "v").
       - name: Derive version from tag

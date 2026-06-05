@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using ClrVoyant.Server;
 
 namespace ClrVoyant.Tests;
@@ -6,9 +7,45 @@ public class NetcoredbgLocatorTests
 {
     const string EnvVar = "CLRVOYANT_NETCOREDBG";
 
+    static string ExeName => OperatingSystem.IsWindows() ? "netcoredbg.exe" : "netcoredbg";
+
     static string BundledPath =>
-        Path.Combine(AppContext.BaseDirectory, "tools", "netcoredbg",
-            OperatingSystem.IsWindows() ? "netcoredbg.exe" : "netcoredbg");
+        Path.Combine(AppContext.BaseDirectory, "tools", "netcoredbg", ExeName);
+
+    static string? CurrentRid => (OperatingSystem.IsWindows(), RuntimeInformation.ProcessArchitecture) switch
+    {
+        (true, Architecture.X64) => "win-x64",
+        (false, Architecture.X64) => "linux-x64",
+        (false, Architecture.Arm64) => "linux-arm64",
+        _ => null,
+    };
+
+    [Fact]
+    public void Resolve_prefers_per_rid_bundle_over_flat()
+    {
+        // The packaged tool bundles every RID under tools/netcoredbg/<rid>/; the
+        // locator must pick the current host's RID even when a flat copy also exists.
+        if (CurrentRid is not { } rid) return; // unsupported host: nothing to assert
+
+        var prev = Environment.GetEnvironmentVariable(EnvVar);
+        var root = Path.Combine(AppContext.BaseDirectory, "tools", "netcoredbg");
+        var flat = Path.Combine(root, ExeName);
+        var ridPath = Path.Combine(root, rid, ExeName);
+        bool createdFlat = false, createdRid = false;
+        try
+        {
+            Environment.SetEnvironmentVariable(EnvVar, null);
+            if (!File.Exists(flat)) { Directory.CreateDirectory(root); File.WriteAllText(flat, "flat"); createdFlat = true; }
+            if (!File.Exists(ridPath)) { Directory.CreateDirectory(Path.GetDirectoryName(ridPath)!); File.WriteAllText(ridPath, "rid"); createdRid = true; }
+            Assert.Equal(ridPath, NetcoredbgLocator.Resolve());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(EnvVar, prev);
+            if (createdRid) File.Delete(ridPath);
+            if (createdFlat) File.Delete(flat);
+        }
+    }
 
     [Fact]
     public void Resolve_prefers_env_var_when_file_exists()

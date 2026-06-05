@@ -23,7 +23,7 @@ Console.WriteLine($"SampleApp PID={Process.GetCurrentProcess().Id}");
 int i = 0;
 while (true)
 {
-    int result = Compute(i);
+    int result = Calc.Compute(i);
     Console.WriteLine($"tick {i} -> {result}");
     await Task.Delay(500);
     i++;
@@ -31,9 +31,15 @@ while (true)
 
 static async Task<int> AwaitForever(Task<int> gate) => await gate + 1;
 
-static int Compute(int n)
+// A real method on a named type (NOT a top-level local function, whose compiled name
+// is mangled): integration tests break here both by source line (the marker below)
+// and by function name ("Calc.Compute"), the no-source path.
+static class Calc
 {
-    int squared = n * n;
-    int offset = squared + 7;   // BREAKPOINT-TARGET
-    return offset;
+    public static int Compute(int n)
+    {
+        int squared = n * n;
+        int offset = squared + 7;   // BREAKPOINT-TARGET
+        return offset;
+    }
 }

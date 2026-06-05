@@ -1,7 +1,8 @@
 # Testing strategy
 
-Three layers — fast unit tests, real-engine integration tests, and end-to-end
-spikes/smokes — plus the de-risking spikes that gate risky directions.
+Layers — fast unit tests, real-engine integration tests (including an opt-in
+packaging layer that exercises the installed tool), and end-to-end spikes/smokes —
+plus the de-risking spikes that gate risky directions.
 
 ## 1. Unit tests (`tests/ClrVoyant.Tests`, xUnit)
 
@@ -14,6 +15,10 @@ Pure logic, no netcoredbg. The control engine is faked
 - Breakpoint store: stable ids, full-set re-send, clear, restart re-applies.
 - `BreakpointLocator` (content→line resolution), `ProcessLister` (lists self as
   .NET), `OwnedResource` disposal on stop, `HostFactory` DI wiring.
+- `AssemblyMethodScanner` (no-source discovery): finds a real method by full name,
+  applies type/method filters, skips compiler-generated members, honours the cap.
+- `NetcoredbgLocator`: env override, per-RID bundle preferred over flat, fail-closed
+  when fetching is disabled.
 
 ## 2. Integration tests (real netcoredbg + ClrMD)
 
@@ -22,7 +27,19 @@ ClrMD against `samples/SampleApp`. `TestPaths` locates the repo artifacts
 (bundled netcoredbg, built SampleApp, the `BREAKPOINT-TARGET` line).
 `DebugSessionFixture` (an `IClassFixture`) launches SampleApp once, stops it at the
 breakpoint, and shares that stop across the read-only inspection tests (threads,
-call stack, scopes/variables/evaluate, `list_tasks`, async graph).
+call stack, scopes/variables/evaluate, `list_tasks`, async graph). Control-flow tests
+add: a **function breakpoint** binding and hitting `Calc.Compute` with no source line
+(the no-source path), and a rejected `debug_attach` surfacing netcoredbg's real error
+(not a hang or a generic message).
+
+### Packaging tests (opt-in: `CLRVOYANT_PACKAGING_TESTS=1`)
+`InstalledToolTests` is the end-to-end check of the **shipped artifact**: it packs
+the tool, installs it from a local folder feed, then drives a real debug loop
+(`debug_launch` → `set_breakpoint` → `continue` → `get_callstack`) through the
+installed `clrvoyant` over MCP/stdio with `CLRVOYANT_NO_FETCH=1` — proving the
+bundled per-RID engine works **offline**. Skipped unless the env var is set; CI runs
+it on every leg (Windows / linux-x64 / linux-arm64), so each RID's bundle is
+validated on its own native platform.
 
 Run everything:
 ```pwsh

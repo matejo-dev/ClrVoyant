@@ -21,6 +21,11 @@ public sealed class Session : IAsyncDisposable
     readonly SemaphoreSlim _bpLock = new(1, 1);
     readonly Dictionary<string, List<(int id, BreakpointRequest req)>> _bpsByFile = new();
     readonly Dictionary<int, (bool verified, int line, string file)> _bpResult = new();
+    // Function breakpoints are global (DAP setFunctionBreakpoints replaces the whole
+    // set), kept in their own list but sharing _bpCounter so ids are unique across
+    // both kinds and _bpLock so all breakpoint mutations are serialized together.
+    readonly List<(int id, FunctionBreakpointRequest req)> _fnBps = new();
+    readonly Dictionary<int, FunctionBreakpoint> _fnResult = new();
     int _bpCounter;
 
     public string Id { get; }
@@ -147,6 +152,22 @@ public sealed class Session : IAsyncDisposable
         finally { _bpLock.Release(); }
     }
 
+    /// <summary>Set a function (method-name) breakpoint. Binds from the PDB without a
+    /// source file or line — the no-source case (deployed DLLs + PDBs). The whole set
+    /// is re-sent on every change because DAP setFunctionBreakpoints is replace-all.</summary>
+    public async Task<FunctionBreakpoint> AddFunctionBreakpointAsync(FunctionBreakpointRequest req, CancellationToken ct = default)
+    {
+        await _bpLock.WaitAsync(ct);
+        try
+        {
+            int id = ++_bpCounter;
+            _fnBps.Add((id, req));
+            await ResendFunctionsAsync(ct);
+            return _fnResult[id];
+        }
+        finally { _bpLock.Release(); }
+    }
+
     public async Task<bool> RemoveBreakpointAsync(int bpId, CancellationToken ct = default)
     {
         await _bpLock.WaitAsync(ct);
@@ -159,6 +180,15 @@ public sealed class Session : IAsyncDisposable
                 list.RemoveAt(idx);
                 _bpResult.Remove(bpId);
                 await ResendAsync(path, ct);
+                return true;
+            }
+
+            int fnIdx = _fnBps.FindIndex(e => e.id == bpId);
+            if (fnIdx >= 0)
+            {
+                _fnBps.RemoveAt(fnIdx);
+                _fnResult.Remove(bpId);
+                await ResendFunctionsAsync(ct);
                 return true;
             }
             return false;
@@ -181,6 +211,19 @@ public sealed class Session : IAsyncDisposable
         finally { _bpLock.Release(); }
     }
 
+    public async Task<IReadOnlyList<FunctionBreakpoint>> ListFunctionBreakpointsAsync(CancellationToken ct = default)
+    {
+        await _bpLock.WaitAsync(ct);
+        try
+        {
+            return _fnBps
+                .Where(e => _fnResult.ContainsKey(e.id))
+                .Select(e => _fnResult[e.id])
+                .ToList();
+        }
+        finally { _bpLock.Release(); }
+    }
+
     /// <summary>Remove every breakpoint in every file (sending an empty set to the
     /// engine per file). Returns how many breakpoints were cleared.</summary>
     public async Task<int> ClearBreakpointsAsync(CancellationToken ct = default)
@@ -188,7 +231,7 @@ public sealed class Session : IAsyncDisposable
         await _bpLock.WaitAsync(ct);
         try
         {
-            int count = _bpsByFile.Values.Sum(l => l.Count);
+            int count = _bpsByFile.Values.Sum(l => l.Count) + _fnBps.Count;
             foreach (var path in _bpsByFile.Keys.ToList())
             {
                 _bpsByFile[path].Clear();
@@ -196,6 +239,13 @@ public sealed class Session : IAsyncDisposable
             }
             _bpsByFile.Clear();
             _bpResult.Clear();
+
+            if (_fnBps.Count > 0)
+            {
+                _fnBps.Clear();
+                await ResendFunctionsAsync(ct); // empty set => engine clears function bps
+            }
+            _fnResult.Clear();
             return count;
         }
         finally { _bpLock.Release(); }
@@ -209,6 +259,15 @@ public sealed class Session : IAsyncDisposable
         var results = await Engine.SetBreakpointsAsync(path, reqs, ct);
         for (int i = 0; i < list.Count && i < results.Count; i++)
             _bpResult[list[i].id] = (results[i].Verified, results[i].Line, path);
+    }
+
+    // Re-send the full desired function-breakpoint set and remap onto stable ids.
+    async Task ResendFunctionsAsync(CancellationToken ct)
+    {
+        var reqs = _fnBps.Select(e => e.req).ToList();
+        var results = await Engine.SetFunctionBreakpointsAsync(reqs, ct);
+        for (int i = 0; i < _fnBps.Count && i < results.Count; i++)
+            _fnResult[_fnBps[i].id] = results[i] with { Id = _fnBps[i].id };
     }
 
     public Task SetExceptionBreakpointsAsync(IReadOnlyList<string> filters, CancellationToken ct = default)
@@ -267,6 +326,8 @@ public sealed class Session : IAsyncDisposable
         {
             foreach (var path in _bpsByFile.Keys.ToList())
                 await ResendAsync(path, ct);
+            if (_fnBps.Count > 0)
+                await ResendFunctionsAsync(ct);
         }
         finally { _bpLock.Release(); }
     }

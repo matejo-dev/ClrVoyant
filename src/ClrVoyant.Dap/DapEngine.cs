@@ -57,13 +57,19 @@ public sealed class DapEngine : IDebugEngine
         return new StopLocation(null, null, reason, thread);
     }
 
+    // How long we wait for netcoredbg to become ready / answer a launch/attach
+    // before giving up rather than hanging forever.
+    static readonly TimeSpan ReadyTimeout = TimeSpan.FromSeconds(15);
+
     public async Task LaunchAsync(LaunchRequest request, CancellationToken ct = default)
     {
         string program = Path.GetFullPath(request.Program);
         _client.Start();
         await _client.RequestAsync("initialize", InitArgs());
-        // launch response may arrive after configurationDone; do not await it here.
-        _ = _client.RequestAsync("launch", new
+        // The launch response may legitimately arrive only after configurationDone
+        // (DAP ordering), so we don't await it inline — but we KEEP the task so a
+        // rejection surfaces with netcoredbg's real message instead of being lost.
+        var launch = _client.RequestAsync("launch", new
         {
             request = "launch",
             type = "coreclr",
@@ -73,8 +79,9 @@ public sealed class DapEngine : IDebugEngine
             stopAtEntry = request.StopAtEntry,
             justMyCode = false,
         });
-        await _client.WaitInitializedAsync();
+        await WaitReadyOrThrowAsync(launch, ct);
         await _client.RequestAsync("configurationDone");
+        await ObserveStartAsync(launch, ct);
         await WaitProcessAsync(ct);
         if (State == SessionState.Starting) State = SessionState.Running;
     }
@@ -84,10 +91,50 @@ public sealed class DapEngine : IDebugEngine
         _pid = pid;
         _client.Start();
         await _client.RequestAsync("initialize", InitArgs());
-        _ = _client.RequestAsync("attach", new { request = "attach", type = "coreclr", processId = pid });
-        await _client.WaitInitializedAsync();
+        var attach = _client.RequestAsync("attach", new { request = "attach", type = "coreclr", processId = pid });
+        await WaitReadyOrThrowAsync(attach, ct);
         await _client.RequestAsync("configurationDone");
+        await ObserveStartAsync(attach, ct);
         if (State == SessionState.Starting) State = SessionState.Running;
+    }
+
+    /// <summary>
+    /// Wait until netcoredbg signals it is ready for <c>configurationDone</c> (the DAP
+    /// <c>initialized</c> event). The launch/attach request is in flight: if it is
+    /// REJECTED first — e.g. attach denied because another debugger (Visual Studio)
+    /// already owns the process — that rejection lands here and we rethrow it so the
+    /// caller sees netcoredbg's actual reason instead of an unobserved exception and a
+    /// hang on an <c>initialized</c> event that will never come.
+    /// </summary>
+    async Task WaitReadyOrThrowAsync(Task<JsonElement> launchOrAttach, CancellationToken ct)
+    {
+        var initialized = _client.WaitInitializedAsync();
+        var timeout = Task.Delay(ReadyTimeout, ct);
+        var first = await Task.WhenAny(initialized, launchOrAttach, timeout);
+        if (first == launchOrAttach && launchOrAttach.IsFaulted)
+            await launchOrAttach; // rethrows the DapException carrying netcoredbg's message
+        if (first == timeout)
+            throw new TimeoutException($"netcoredbg did not become ready within {ReadyTimeout.TotalSeconds:0}s.");
+        // Attach/launch may have answered (successfully) before 'initialized'; make
+        // sure we still have the green light for configurationDone.
+        if (!initialized.IsCompleted && await Task.WhenAny(initialized, timeout) == timeout)
+            throw new TimeoutException($"netcoredbg did not become ready within {ReadyTimeout.TotalSeconds:0}s.");
+    }
+
+    /// <summary>
+    /// After configurationDone, observe the launch/attach response so a failure that
+    /// is only reported at this late stage is surfaced. If the response succeeds it is
+    /// consumed; if the adapter keeps it pending we attach a guard so an eventual
+    /// failure never escapes as an unobserved task exception.
+    /// </summary>
+    static async Task ObserveStartAsync(Task<JsonElement> launchOrAttach, CancellationToken ct)
+    {
+        var first = await Task.WhenAny(launchOrAttach, Task.Delay(ReadyTimeout, ct));
+        if (first == launchOrAttach)
+            await launchOrAttach; // rethrows if the start ultimately failed
+        else
+            _ = launchOrAttach.ContinueWith(static t => _ = t.Exception,
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously);
     }
 
     static object InitArgs() => new
@@ -141,6 +188,47 @@ public sealed class DapEngine : IDebugEngine
         // netcoredbg often returns verified=false and binds the breakpoint
         // asynchronously via a 'breakpoint' event. Briefly wait for that flip so
         // the reported state is accurate.
+        if (result.Any(b => !b.Verified && b.Id != 0))
+        {
+            var deadline = DateTime.UtcNow + TimeSpan.FromMilliseconds(600);
+            while (DateTime.UtcNow < deadline && result.Any(b => !b.Verified && b.Id != 0))
+            {
+                await Task.Delay(30, ct);
+                for (int k = 0; k < result.Count; k++)
+                    if (!result[k].Verified && result[k].Id != 0 && _bpVerified.TryGetValue(result[k].Id, out var nv) && nv)
+                        result[k] = result[k] with { Verified = true };
+            }
+        }
+        return result;
+    }
+
+    public async Task<IReadOnlyList<FunctionBreakpoint>> SetFunctionBreakpointsAsync(IReadOnlyList<FunctionBreakpointRequest> breakpoints, CancellationToken ct = default)
+    {
+        var bps = breakpoints.Select(b =>
+        {
+            var d = new Dictionary<string, object> { ["name"] = b.FunctionName };
+            if (b.Condition is not null) d["condition"] = b.Condition;
+            if (b.HitCondition is not null) d["hitCondition"] = b.HitCondition;
+            return d;
+        }).ToArray();
+
+        var resp = await _client.RequestAsync("setFunctionBreakpoints", new { breakpoints = bps });
+        var result = new List<FunctionBreakpoint>();
+        int i = 0;
+        foreach (var e in resp.GetProperty("body").GetProperty("breakpoints").EnumerateArray())
+        {
+            int id = e.TryGetProperty("id", out var idEl) ? idEl.GetInt32() : 0;
+            bool verified = e.TryGetProperty("verified", out var v) && v.GetBoolean();
+            string? file = e.TryGetProperty("source", out var src) && src.ValueKind == JsonValueKind.Object && src.TryGetProperty("path", out var p)
+                ? p.GetString() : null;
+            int? line = e.TryGetProperty("line", out var ln) && ln.GetInt32() > 0 ? ln.GetInt32() : null;
+            if (id != 0) _bpVerified[id] = verified;
+            result.Add(new FunctionBreakpoint(id, verified, breakpoints[i].FunctionName, file, line));
+            i++;
+        }
+
+        // Like source breakpoints, netcoredbg may verify asynchronously via a
+        // 'breakpoint' event; briefly wait for the flip so the reported state is accurate.
         if (result.Any(b => !b.Verified && b.Id != 0))
         {
             var deadline = DateTime.UtcNow + TimeSpan.FromMilliseconds(600);

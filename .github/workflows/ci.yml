@@ -41,5 +41,10 @@ jobs:
 
       # Builds the server (triggers the netcoredbg fetch) and runs the full suite,
       # including the integration tests that drive a real netcoredbg + ClrMD.
+      # CLRVOYANT_PACKAGING_TESTS=1 also packs the tool, installs it from a local
+      # feed, and drives a real debug loop through the installed `clrvoyant` with
+      # fetching disabled — so each runner validates its own RID's bundled engine.
       - name: Test
         run: dotnet test tests/ClrVoyant.Tests/ClrVoyant.Tests.csproj -c Release
+        env:
+          CLRVOYANT_PACKAGING_TESTS: '1'
