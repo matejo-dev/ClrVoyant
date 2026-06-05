@@ -2,17 +2,18 @@
 
 ClrVoyant depends on the components below. NuGet dependencies ship their own license
 files inside the packages; the licenses are summarized here for convenience.
-netcoredbg is **not** committed to this repository — it is downloaded at build time
-(pinned version, SHA-256 verified) by the `FetchNetcoredbg` MSBuild target and
-bundled with the server output. By redistributing the server output you also
-redistribute netcoredbg under its license, reproduced below.
+netcoredbg is **not** committed to this repository — it is downloaded at build/publish
+time (pinned version, SHA-256 verified) by MSBuild targets (`FetchNetcoredbg` for the
+build-host cache; `StageNetcoredbgRidsToPublish`, which stages every supported RID into
+the published package) and bundled with the server output. By redistributing the server
+output you also redistribute netcoredbg under its license, reproduced below.
 
 ## netcoredbg — MIT License
 
 - Project: https://github.com/Samsung/netcoredbg
 - Copyright (c) Samsung Electronics Co., LTD
-- Fetched version: pinned in `src/ClrVoyant.Server/ClrVoyant.Server.csproj`
-  (`NetcoredbgVersion`).
+- Fetched version: pinned in `Directory.Build.props` (`NetcoredbgVersion`, the single
+  source of truth) and consumed by the server csproj.
 
 ```
 MIT License

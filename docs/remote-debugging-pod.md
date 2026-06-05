@@ -49,11 +49,12 @@ not see the app's process at all. Three ingredients fix that:
 ## End-to-end flow
 
 ### A. Build the image — [`deploy/Dockerfile`](../deploy/Dockerfile)
-- `sdk` stage: `dotnet publish` the server.
+- `sdk` stage: `dotnet publish` the server. Publish stages netcoredbg for **all
+  supported RIDs** under `/app/tools/netcoredbg/<rid>/` (downloaded + SHA-256
+  verified at publish time with built-in MSBuild tasks).
 - `aspnet` runtime stage (HTTP needs the ASP.NET shared framework): copies the
-  publish and **downloads the architecture-matching netcoredbg** (linux-x64 or
-  linux-arm64, per the build platform) into `/app/tools/netcoredbg/`, exactly where
-  `NetcoredbgLocator` looks — zero extra config. Build arm64 with
+  publish output and `chmod +x` the Linux launcher(s) — **no download here**.
+  `NetcoredbgLocator` then picks the image's RID. Build arm64 with
   `docker buildx build --platform linux/arm64`.
 - Sets `CLRVOYANT_TRANSPORT=http` and `CLRVOYANT_HTTP_URL=http://0.0.0.0:3001`. The
   **token is not baked in** — the server fails closed without `CLRVOYANT_AUTH_TOKEN`.

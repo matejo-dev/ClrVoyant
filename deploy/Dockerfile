@@ -9,10 +9,10 @@
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
 COPY . .
-# Publish triggers the FetchNetcoredbg MSBuild target, which downloads the pinned
-# netcoredbg for the build architecture (SHA-256 verified) and bundles it under
-# /app/tools. Build for arm64 with `docker buildx build --platform linux/arm64 .`
-# — the base images are multi-arch and the fetch picks the matching asset.
+# Publish stages netcoredbg for ALL supported RIDs (SHA-256 verified) under
+# /app/tools/netcoredbg/<rid>/ via the StageNetcoredbgRidsToPublish target; the
+# locator picks the image's RID at runtime. Build for arm64 with
+# `docker buildx build --platform linux/arm64 .` — the base images are multi-arch.
 RUN dotnet publish src/ClrVoyant.Server/ClrVoyant.Server.csproj -c Release -o /app
 
 # ---- runtime ----

@@ -11,7 +11,7 @@ them on demand (`TestPaths` locates the built DLL); CI builds them explicitly.
 
 | Project | What it exercises |
 |---|---|
-| [SampleApp](SampleApp/Program.cs) | Parks async `Task`s (`AwaitForever` → WaitingForActivation, a Faulted task), then loops in a synchronous `Compute()` — a stable breakpoint target plus live Tasks for the ClrMD inspector. |
+| [SampleApp](SampleApp/Program.cs) | Parks async `Task`s (`AwaitForever` → WaitingForActivation, a Faulted task), then loops calling `Calc.Compute()` — a real named-type method (not a top-level local function) so it's a stable target for **both** a source-line breakpoint and a **function breakpoint** (`Calc.Compute`), plus live Tasks for the ClrMD inspector. |
 | [ParentApp](ParentApp/Program.cs) | Spawns `SampleApp` as a child .NET process — drives the child-process auto-attach test. |
 
 Build them standalone with:

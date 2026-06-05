@@ -88,6 +88,48 @@ public class IntegrationControlTests
     }
 
     [Fact]
+    public async Task Exception_info_reports_the_thrown_exception()
+    {
+        // Break on the first-chance exception SampleApp throws at startup and read it.
+        // stopAtEntry lets us arm the exception filter before any user code runs.
+        var mgr = NewManager();
+        try
+        {
+            await DebugTools.DebugLaunch(mgr, TestPaths.SampleAppDll, stopAtEntry: true);
+            if (DebugTools.DebugStatus(mgr).State != SessionState.Stopped)
+                await DebugTools.WaitForAnyStop(mgr, 10000);
+
+            await DebugTools.SetExceptionBreakpoints(mgr, new[] { "all" });
+            var outcome = await DebugTools.Continue(mgr, null, 20000);
+            Assert.Equal(SessionState.Stopped, outcome.State);
+
+            var info = await DebugTools.GetExceptionInfo(mgr, null);
+            Assert.NotNull(info);
+            Assert.Contains("InvalidOperationException", info!.TypeName + " " + info.Description);
+        }
+        finally { await Cleanup(mgr); }
+    }
+
+    [Fact]
+    public async Task Clear_all_removes_both_source_and_function_breakpoints()
+    {
+        var mgr = NewManager();
+        try
+        {
+            await DebugTools.DebugLaunch(mgr, TestPaths.SampleAppDll);
+            await DebugTools.SetBreakpoint(mgr, TestPaths.SampleAppSrc, TestPaths.BreakpointLine);
+            var fb = await DebugTools.SetFunctionBreakpoint(mgr, "Calc.Compute");
+            Assert.Contains(await DebugTools.ListFunctionBreakpoints(mgr), b => b.Id == fb.Id);
+
+            var msg = await DebugTools.ClearAllBreakpoints(mgr);
+            Assert.Contains("2", msg); // "cleared 2 breakpoint(s)" — one source + one function
+            Assert.Empty(await DebugTools.ListBreakpoints(mgr));
+            Assert.Empty(await DebugTools.ListFunctionBreakpoints(mgr));
+        }
+        finally { await Cleanup(mgr); }
+    }
+
+    [Fact]
     public async Task Set_exception_breakpoints_succeeds()
     {
         var mgr = await StartStoppedAsync();

@@ -268,7 +268,7 @@ src/ClrVoyant.Core         models, IDebugEngine, Session, SessionManager
 src/ClrVoyant.Dap          DAP client + DapEngine (netcoredbg)
 src/ClrVoyant.Inspection   ClrMD TaskInspector (Tasks + async graph) + method discovery
 src/ClrVoyant.Server       MCP stdio host + tools
-tools/netcoredbg          bundled debug engine (fetched at build)
+tools/netcoredbg          bundled debug engine (all RIDs staged into the package)
 samples/SampleApp         a target app for tests
 spike/                    the de-risking proof-of-concept
 scripts/mcp-driver.ps1    stdio test harness

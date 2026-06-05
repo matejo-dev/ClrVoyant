@@ -7,7 +7,7 @@
 #
 # Requirements for useful debugging:
 #   - the APP image must ship its .pdb files (source lines + locals).
-#   - the app and sidecar must be the same architecture (x64) and .NET 8+.
+#   - the app and sidecar must be the same architecture (x64 or arm64) and .NET 8+.
 #
 # SECURITY: this grants a remote, authenticated caller the ability to attach a
 # debugger, set breakpoints and EVALUATE code in the app process. Treat it as a

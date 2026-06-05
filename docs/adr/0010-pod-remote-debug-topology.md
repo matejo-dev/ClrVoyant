@@ -23,9 +23,10 @@ Run ClrVoyant as a **sidecar container in the same POD** as the app:
   (ClusterIP + `kubectl port-forward`, never a public Ingress).
 - The **app image must ship PDBs** for source-level debugging.
 
-Artifacts: `deploy/Dockerfile` (publishes the server, bundles linux-amd64
-netcoredbg), `deploy/clrvoyant-sidecar.yaml`, `deploy/README.md`. The full data flow
-is in `docs/remote-debugging-pod.md`.
+Artifacts: `deploy/Dockerfile` (publishes the server, which bundles netcoredbg for
+all supported RIDs under `tools/netcoredbg/<rid>/`; the image uses its own arch),
+`deploy/clrvoyant-sidecar.yaml`, `deploy/README.md`. The full data flow is in
+`docs/remote-debugging-pod.md`.
 
 ## Consequences
 

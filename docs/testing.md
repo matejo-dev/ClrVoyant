@@ -14,7 +14,10 @@ Pure logic, no netcoredbg. The control engine is faked
   step records kind; spontaneous vs targeted stops.
 - Breakpoint store: stable ids, full-set re-send, clear, restart re-applies.
 - `BreakpointLocator` (content→line resolution), `ProcessLister` (lists self as
-  .NET), `OwnedResource` disposal on stop, `HostFactory` DI wiring.
+  .NET), `OwnedResource` disposal on stop, child-process auto-attach matching
+  (`AutoAttachTests`).
+- `HostFactory`: DI wiring, and the HTTP transport **fails closed** without
+  `CLRVOYANT_AUTH_TOKEN` (the RCE guard).
 - `AssemblyMethodScanner` (no-source discovery): finds a real method by full name,
   applies type/method filters, skips compiler-generated members, honours the cap.
 - `NetcoredbgLocator`: env override, per-RID bundle preferred over flat, fail-closed

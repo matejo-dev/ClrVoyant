@@ -21,7 +21,7 @@ public static class DebugTools
     const string Instructions = """
         ClrVoyant — how to debug a .NET app with these tools.
 
-        SCOPE: .NET 8/9/10 only, x64, headless (no IDE). Build the target first; you
+        SCOPE: .NET 8/9/10 only, x64/arm64, headless (no IDE). Build the target first; you
         debug the built .dll. You decide WHERE to break and WHAT to inspect by reading
         the source with your own tools — ClrVoyant gives you the debugger primitives.
 
