@@ -11,8 +11,9 @@
 #
 # SECURITY: this grants a remote, authenticated caller the ability to attach a
 # debugger, set breakpoints and EVALUATE code in the app process. Treat it as a
-# break-glass / non-prod capability. The bearer token is the only gate — rotate it
-# and scope network access tightly (NetworkPolicy + port-forward only).
+# break-glass / non-prod capability. The bearer token is the only gate — rotate it by
+# updating this Secret and restarting the pod (it is read once at startup), and scope
+# network access tightly (NetworkPolicy + port-forward only).
 apiVersion: v1
 kind: Secret
 metadata:

@@ -48,7 +48,6 @@ License; their notices ship inside the netcoredbg release archive.
 | Package | Owner | License |
 |---|---|---|
 | `Microsoft.Diagnostics.Runtime` (ClrMD) | Microsoft | MIT |
-| `Microsoft.Diagnostics.NETCore.Client` | Microsoft | MIT |
 | `ModelContextProtocol` | Model Context Protocol | MIT |
 | `ModelContextProtocol.AspNetCore` | Model Context Protocol | MIT |
 | `Microsoft.Extensions.Hosting` | Microsoft (.NET) | MIT |

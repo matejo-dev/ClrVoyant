@@ -106,8 +106,8 @@ process — i.e. arbitrary code execution in that POD. Therefore:
 - The server **fails closed** (no token → won't start).
 - Keep the endpoint **cluster-internal**: ClusterIP + `port-forward` (or mTLS at an
   ingress). **Never** a public Service/Ingress.
-- Treat it as **break-glass / non-prod**: rotate the token, restrict reach to port
-  3001 with a `NetworkPolicy`.
+- Treat it as **break-glass / non-prod**: rotate the token by redeploying (it is read
+  once at startup), restrict reach to port 3001 with a `NetworkPolicy`.
 
 Full threat model: [docs/security.md](security.md).
 

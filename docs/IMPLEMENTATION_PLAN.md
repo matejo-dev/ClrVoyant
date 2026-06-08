@@ -124,8 +124,9 @@ server supports many concurrent sessions, each with its own engine and state.
 - `get_callstack(threadId?, startFrame?, levels?)` → async-aware frames
   `[{ frameId, function, file, line }]`
 - `get_scopes(frameId)` → `[{ name, variablesReference }]`
-- `get_variables(variablesReference, depth?)` → `[{ name, value, type, variablesReference }]`
-- `get_variable(variablesReference, depth)` — expand a complex object.
+- `get_variables(variablesReference)` → `[{ name, value, type, variablesReference }]`;
+  pass a child's `variablesReference` to expand a complex object (this expansion was
+  folded into `get_variables` as built — there is no separate `get_variable` tool).
 - `evaluate(expression, frameId?, context?)` — **⚠️ DANGEROUS: evaluating an
   expression executes code in the debuggee (property getters, method calls) and
   can mutate state or cause side effects.** This warning is in the tool
@@ -198,9 +199,9 @@ ClrVoyant/
     ClrVoyant.Server/
   tools/netcoredbg/                 ← bundled engine (per RID)
   tests/
-    ClrVoyant.IntegrationTests/      ← drive a sample target end-to-end
+    ClrVoyant.Tests/                 ← unit + integration (drive a sample target end-to-end)
   samples/SampleApp/                ← a richer target for tests/demos
-  ClrVoyant.sln
+  ClrVoyant.slnx
 ```
 
 ---
@@ -217,8 +218,7 @@ ClrVoyant/
 - **Phase 2 — Breakpoints + wait-based control.** `set_breakpoint`, `continue`,
   `step_*`, `pause`. Exit: deterministic break/continue loop.
 - **Phase 3 — Live introspection.** `get_threads`, `get_callstack`, `get_scopes`,
-  `get_variables`, `get_variable`, `evaluate`, exceptions. Exit: full DAP-side
-  developer view.
+  `get_variables`, `evaluate`, exceptions. Exit: full DAP-side developer view.
 - **Phase 4 — Tasks enumeration.** `list_tasks`, `get_task` via ClrMD snapshot at
   stop. Exit: full Task list with status.
 - **Phase 5 — Async graph.** `get_async_callstack`, `get_async_graph`. Exit: the

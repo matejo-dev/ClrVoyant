@@ -26,11 +26,14 @@ Support three host/target architectures, each tool instance matching its target:
 
 - Drop the `PlatformTarget=x64` pin: the server/tests run AnyCPU, i.e. at the host
   architecture, which is what must match the co-located target.
-- Both fetch paths are architecture-aware off the **running/build process arch**:
-  the runtime fetch (`NetcoredbgFetcher`) and the build-time fetch
-  (`Directory.Build.props` + `tools/fetch-netcoredbg.sh`) select the asset and its
-  pinned SHA-256 accordingly. SHAs for all three assets are pinned in
-  `Directory.Build.props` (single source of truth) and baked into the assembly.
+- The **host-arch** fetch paths are architecture-aware off the **running/build
+  process arch**: the runtime fetch (`NetcoredbgFetcher`, last-resort fallback) and
+  the `dotnet build` output bundle (`Directory.Build.props` +
+  `tools/fetch-netcoredbg.{sh,ps1}`) select the asset and its pinned SHA-256 for the
+  current host. The **shipped package** is different: its all-RID staging (see below)
+  is host-independent — it bundles every RID via built-in MSBuild tasks, not the shell
+  script. SHAs for all three assets are pinned in `Directory.Build.props` (single
+  source of truth) and baked into the assembly.
 
 ## Consequences
 

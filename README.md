@@ -12,8 +12,8 @@ at while debugging — deterministically, headless, with no IDE.
 Style is the same as the Azure DevOps / Azure MCP servers: run it locally, point
 your agent at it, and ask in natural language:
 
-> "Launch project X, set a breakpoint where the bug is, run it, read the
-> variables and the async tasks, and tell me why ABC happens."
+> "Launch project X — it hangs instead of completing. Set breakpoints, step
+> through, read the variables and the in-flight async tasks, and tell me why."
 
 The agent decides *where* to break and *what* to inspect (it reads your source
 with its own tools); ClrVoyant gives it the deterministic debugger primitives.
@@ -294,6 +294,9 @@ ClrVoyant stands on:
 Prior art that shaped the design space: [microsoft/DebugMCP](https://github.com/microsoft/DebugMCP)
 and [debugmcp/mcp-debugger](https://github.com/debugmcp/mcp-debugger). See
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) for licenses.
+
+Thanks to **[@robselleri70](https://github.com/robselleri70)** for the initial
+idea that sparked this project.
 
 ## License
 

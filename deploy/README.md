@@ -93,5 +93,6 @@ code** in the app process — i.e. arbitrary code execution in that POD. Therefo
 - The server **fails closed**: HTTP refuses to start without `CLRVOYANT_AUTH_TOKEN`.
 - Keep the endpoint **cluster-internal** (ClusterIP + `port-forward`, or mTLS).
   Do **not** expose it via a public Service/Ingress.
-- Treat this as a **break-glass / non-prod** capability; rotate the token, and use
-  a `NetworkPolicy` to restrict who can reach port 3001.
+- Treat this as a **break-glass / non-prod** capability; rotate the token by
+  redeploying (it is read once at startup), and use a `NetworkPolicy` to restrict who
+  can reach port 3001.
