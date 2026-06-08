@@ -41,15 +41,19 @@ closed**:
    `kubectl port-forward`, or mTLS at an ingress. **Never** a public Service/Ingress.
    Add a `NetworkPolicy` restricting who can reach port 3001.
 2. **Token hygiene** — strong random secret (`openssl rand -hex 32`), stored in a
-   Kubernetes `Secret` (not baked into the image), rotated regularly.
+   Kubernetes `Secret` (not baked into the image). The token is read once at startup,
+   so rotation means updating the Secret and restarting/redeploying the pod — there is
+   no hot reload.
 3. **Scope & lifetime** — treat the in-POD debugger as **break-glass / non-prod**.
    Don't leave it standing in production; bring it up for an investigation, tear it
    down after. (An ephemeral-debug-container variant is noted as future work in
    [ADR-0010](adr/0010-pod-remote-debug-topology.md).)
 4. **Least privilege** — the sidecar needs `CAP_SYS_PTRACE` and
    `shareProcessNamespace`; grant nothing more. Don't run it privileged.
-5. **Audit** — the server logs each `tools/call` (tool name, success). Ship those
-   logs so debug sessions are attributable.
+5. **Audit** — the server logs each `tools/call` (tool name and outcome:
+   `ok` / `error` / `canceled`) under the `ClrVoyant.Audit` category. On stdio this
+   goes to stderr (stdout is the JSON-RPC stream); on HTTP it goes to the console
+   sink. Ship those logs so debug sessions are attributable.
 
 ## Capabilities required (and why they're sensitive)
 
@@ -71,7 +75,8 @@ deliberate, operator-granted decision for a debugging window.
 
 ## Quick checklist before deploying HTTP
 
-- [ ] `CLRVOYANT_AUTH_TOKEN` set from a Secret, strong and rotated.
+- [ ] `CLRVOYANT_AUTH_TOKEN` set from a Secret, strong, and rotated by redeploy
+      (read once at startup).
 - [ ] Endpoint not reachable from outside the cluster (no public Ingress).
 - [ ] `NetworkPolicy` limits who can hit port 3001.
 - [ ] Sidecar has only `SYS_PTRACE` (+ `shareProcessNamespace`), not privileged.

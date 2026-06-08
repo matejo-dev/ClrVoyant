@@ -45,7 +45,8 @@ public static class HostFactory
         builder.Services
             .AddMcpServer()
             .WithStdioServerTransport()
-            .WithToolsFromAssembly();
+            .WithToolsFromAssembly()
+            .WithRequestFilters(AuditLog.Register);
 
         return builder.Build();
     }
@@ -65,7 +66,8 @@ public static class HostFactory
         builder.Services
             .AddMcpServer()
             .WithHttpTransport()
-            .WithToolsFromAssembly();
+            .WithToolsFromAssembly()
+            .WithRequestFilters(AuditLog.Register);
 
         var app = builder.Build();
         app.Use(async (ctx, next) =>
