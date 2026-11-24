@@ -13,10 +13,10 @@ DBGDIR=$LX/.netcoredbg
 echo "=== [1/4] fetching netcoredbg (pinned, arch from uname) ==="
 # Pinned + SHA-256 verified via the shared fetch script (keep in sync with
 # Directory.Build.props, the single source of truth for the version/hashes).
-NCDBG_VERSION="3.1.3-1062"
+NCDBG_VERSION="3.2.0-1092"
 case "$(uname -m)" in
-  x86_64|amd64)  NCDBG_SHA256="3814341c028c81ff7eea03ac316ad92e9ad7d705d2a00e3e3df269cdc241c763" ;;
-  aarch64|arm64) NCDBG_SHA256="fc9efb691a53932a7fac4b9f67af68ad0c2a4cbe59cb2c1a3c44c64959df2ba4" ;;
+  x86_64|amd64)  NCDBG_SHA256="080eb3b2d2152465f599d3b33d1ee6e747794e11cc0a3773ec689f5e5f2c5afa" ;;
+  aarch64|arm64) NCDBG_SHA256="065ff49badec8a695dbea2de6ab6a330c774a191e426a217ab8cc05250627ccb" ;;
   *) echo "unsupported architecture '$(uname -m)'" >&2; exit 1 ;;
 esac
 bash "$REPO/tools/fetch-netcoredbg.sh" "$NCDBG_VERSION" "$NCDBG_SHA256" "$DBGDIR"

@@ -13,10 +13,12 @@ them on demand (`TestPaths` locates the built DLL); CI builds them explicitly.
 |---|---|
 | [SampleApp](SampleApp/Program.cs) | Parks async `Task`s (`AwaitForever` → WaitingForActivation, a Faulted task), then loops calling `Calc.Compute()` — a real named-type method (not a top-level local function) so it's a stable target for **both** a source-line breakpoint and a **function breakpoint** (`Calc.Compute`), plus live Tasks for the ClrMD inspector. |
 | [ParentApp](ParentApp/Program.cs) | Spawns `SampleApp` as a child .NET process — drives the child-process auto-attach test. |
+| [WinFormsApp](WinFormsApp/Program.cs) | **Windows-only.** Shows a form off-screen in a loop; its `OnLoad` is reached from the native window procedure, so a breakpoint there has native frames on its call stack. Rolls forward to the newest installed desktop runtime. Drives the native-frames call-stack test. |
 
 Build them standalone with:
 
 ```sh
 dotnet build samples/SampleApp/SampleApp.csproj -c Debug
 dotnet build samples/ParentApp/ParentApp.csproj -c Debug
+dotnet build samples/WinFormsApp/WinFormsApp.csproj -c Debug   # Windows only
 ```

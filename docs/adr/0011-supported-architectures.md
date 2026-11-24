@@ -22,7 +22,7 @@ Support three host/target architectures, each tool instance matching its target:
 | `win-x64` | ✅ | `netcoredbg-win64.zip` |
 | `linux-x64` | ✅ | `netcoredbg-linux-amd64.tar.gz` |
 | `linux-arm64` | ✅ | `netcoredbg-linux-arm64.tar.gz` |
-| `win-arm64`, macOS | ❌ | no upstream build we depend on |
+| `win-arm64`, macOS | ❌ | none for `win-arm64`; `osx-arm64` exists since netcoredbg 3.2.0 but is not validated here |
 
 - Drop the `PlatformTarget=x64` pin: the server/tests run AnyCPU, i.e. at the host
   architecture, which is what must match the co-located target.
@@ -65,4 +65,5 @@ Support three host/target architectures, each tool instance matching its target:
 - **AnyCPU with no arch-aware fetch.** Would launch on arm64 but then download the
   x64 engine and mismatch ClrMD — broken. Rejected; arch-awareness is required.
 - **Support `win-arm64` / macOS.** No netcoredbg build we rely on; low demand for a
-  .NET *server* debugger. Deferred until upstream + demand exist.
+  .NET *server* debugger. Deferred until upstream + demand exist. (Upstream added
+  `osx-arm64` in 3.2.0; `win-arm64` is still missing.)

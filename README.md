@@ -65,8 +65,8 @@ Concrete scenarios it delivers today (Windows or Linux, .NET 8/9/10):
 
 - **Supported architectures**: `win-x64`, `linux-x64`, `linux-arm64`. The engine
   debugs locally, so **the tool runs at the same architecture as the target** — an
-  arm64 tool for an arm64 process. (No `win-arm64` or macOS: netcoredbg ships no
-  such build.) Each architecture is exercised by its own CI leg, including an
+  arm64 tool for an arm64 process. (No `win-arm64`: netcoredbg ships no such
+  build. No macOS: not validated.) Each architecture is exercised by its own CI leg, including an
   `arm64` runner on real hardware — see [ADR-0011](docs/adr/0011-supported-architectures.md).
 - **.NET SDK 8 / 9 / 10** (the target apps you debug must be .NET 8+; .NET
   Framework is not supported)

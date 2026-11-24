@@ -2,6 +2,7 @@
   <Folder Name="/samples/">
     <Project Path="samples/ParentApp/ParentApp.csproj" />
     <Project Path="samples/SampleApp/SampleApp.csproj" />
+    <Project Path="samples/WinFormsApp/WinFormsApp.csproj" />
   </Folder>
   <Folder Name="/src/">
     <Project Path="src/ClrVoyant.Core/ClrVoyant.Core.csproj" />

@@ -35,6 +35,15 @@ add: a **function breakpoint** binding and hitting `Calc.Compute` with no source
 (the no-source path), and a rejected `debug_attach` surfacing netcoredbg's real error
 (not a hang or a generic message).
 
+### Call stacks through native code (`NativeFrameCallstackTests`, Windows-only)
+Breaks in a WinForms `OnLoad`, which the native window procedure calls from inside
+the framework's `ShowWindow` P/Invoke, and asserts that the stop carries its
+file/line and that `get_callstack` returns frames on both sides of the native
+transition. On newer desktop runtimes that P/Invoke frame is managed but not IL;
+netcoredbg before 3.2.0 aborted the whole stack walk on it (GitHub issue #1). The
+`samples/WinFormsApp` target rolls forward to the newest installed desktop runtime
+so the test exercises it. Skipped on Linux.
+
 ### Symbols boundary (`OptimizedBuildTests`, `NoPdbDebuggingTests`)
 Two tests pin down what actually gates debugging — the PDB, not Debug-vs-Release:
 - `OptimizedBuildTests` builds SampleApp with `Optimize=true` and proves a line
