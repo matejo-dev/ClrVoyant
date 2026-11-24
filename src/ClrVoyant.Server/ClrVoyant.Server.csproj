@@ -58,15 +58,17 @@
   <!-- netcoredbg is fetched at build time (pinned version, SHA-256 verified) into
        a local cache under tools/netcoredbg/, then bundled next to the server where
        NetcoredbgLocator finds it. It is NOT committed to the repo (MIT, large
-       binary). The download runs ONLY when the cache is missing, so a fresh clone
-       fetches once and later builds skip it. Version/hashes are pinned in
-       Directory.Build.props (single source of truth). See THIRD-PARTY-NOTICES.md. -->
+       binary). The download runs ONLY when the cache is missing or holds another
+       version (checked via the $(NetcoredbgStampName) marker), so a fresh clone
+       fetches once, later builds skip it, and a version bump refetches.
+       Version/hashes are pinned in Directory.Build.props (single source of truth).
+       See THIRD-PARTY-NOTICES.md. -->
 
-  <!-- Populate the cache (only when missing). -->
+  <!-- Populate the cache (only when missing or stale). -->
   <Target Name="FetchNetcoredbg" BeforeTargets="Build;Publish">
-    <Exec Condition="!Exists('$(NetcoredbgCacheDir)\$(NetcoredbgExeName)') And $([MSBuild]::IsOSPlatform('Windows'))"
+    <Exec Condition="(!Exists('$(NetcoredbgCacheDir)\$(NetcoredbgExeName)') Or !Exists('$(NetcoredbgCacheDir)\$(NetcoredbgStampName)')) And $([MSBuild]::IsOSPlatform('Windows'))"
           Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(RepoToolsDir)\fetch-netcoredbg.ps1&quot; -Version $(NetcoredbgVersion) -Sha256 $(NetcoredbgSha256) -DestDir &quot;$(NetcoredbgCacheDir)&quot;" />
-    <Exec Condition="!Exists('$(NetcoredbgCacheDir)/$(NetcoredbgExeName)') And !$([MSBuild]::IsOSPlatform('Windows'))"
+    <Exec Condition="(!Exists('$(NetcoredbgCacheDir)/$(NetcoredbgExeName)') Or !Exists('$(NetcoredbgCacheDir)/$(NetcoredbgStampName)')) And !$([MSBuild]::IsOSPlatform('Windows'))"
           Command="bash &quot;$(RepoToolsDir)/fetch-netcoredbg.sh&quot; $(NetcoredbgVersion) $(NetcoredbgSha256) &quot;$(NetcoredbgCacheDir)&quot;" />
   </Target>
 
@@ -107,10 +109,12 @@
   </Target>
 
   <!-- Stage one RID's netcoredbg into $(StageDestRoot)/$(StageRid)/. Idempotent:
-       skips entirely if the binary is already present. Parametrized via the MSBuild
-       task above so the download/verify/extract logic lives in exactly one place. -->
+       skips entirely if the binary AND the marker for the pinned version are already
+       present, so a publish dir staged for an older pin is replaced, not reused.
+       Parametrized via the MSBuild task above so the download/verify/extract logic
+       lives in exactly one place. -->
   <Target Name="StageOneNetcoredbgRid"
-          Condition="!Exists('$(StageDestRoot)/$(StageRid)/$(StageExe)')">
+          Condition="!Exists('$(StageDestRoot)/$(StageRid)/$(StageExe)') Or !Exists('$(StageDestRoot)/$(StageRid)/$(NetcoredbgStampName)')">
     <PropertyGroup>
       <_StageTmp>$(IntermediateOutputPath)ncdbg-stage/$(StageRid)</_StageTmp>
       <_StageUrl>https://github.com/Samsung/netcoredbg/releases/download/$(NetcoredbgVersion)/$(StageAsset)</_StageUrl>
@@ -131,10 +135,14 @@
 
     <!-- .zip via the built-in Unzip task; .tar.gz via tar (present on Windows 10+,
          Linux, and the dotnet SDK image — there is no built-in tar MSBuild task).
-         tar's -C target must exist first; Unzip creates its destination itself. -->
+         tar's -C target must exist first; Unzip creates its destination itself.
+         tar runs from the staging folder with RELATIVE paths: GNU tar (e.g. Git for
+         Windows' tar, first on PATH in Git Bash) reads a "c:\..." archive path as a
+         remote host:path, while relative names work with both GNU tar and bsdtar. -->
     <MakeDir Directories="$(_StageTmp)/x" />
     <Unzip Condition="'$(StageIsZip)' == 'true'" SourceFiles="$(_StageArchive)" DestinationFolder="$(_StageTmp)/x" />
-    <Exec Condition="'$(StageIsZip)' != 'true'" Command="tar -xzf &quot;$(_StageArchive)&quot; -C &quot;$(_StageTmp)/x&quot;" />
+    <Exec Condition="'$(StageIsZip)' != 'true'" WorkingDirectory="$(_StageTmp)"
+          Command="tar -xzf &quot;$(StageAsset)&quot; -C x" />
 
     <!-- The upstream archive nests everything under a netcoredbg/ folder; promote its
          contents to tools/netcoredbg/<rid>/ where the locator looks. -->
@@ -142,8 +150,11 @@
       <_StageFiles Include="$(_StageTmp)/x/netcoredbg/**/*" />
     </ItemGroup>
     <Error Condition="'@(_StageFiles)' == ''" Text="netcoredbg/ folder not found inside $(StageAsset)." />
+    <!-- Replace (not merge into) a previously staged version, then mark this one. -->
+    <RemoveDir Directories="$(StageDestRoot)/$(StageRid)" />
     <Copy SourceFiles="@(_StageFiles)"
           DestinationFiles="@(_StageFiles->'$(StageDestRoot)/$(StageRid)/%(RecursiveDir)%(Filename)%(Extension)')" />
+    <Touch Files="$(StageDestRoot)/$(StageRid)/$(NetcoredbgStampName)" AlwaysCreate="true" />
     <RemoveDir Directories="$(_StageTmp)" />
   </Target>
 

@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Fetch the bundled netcoredbg (Linux x64 or arm64, picked from `uname -m`) into a
-# destination folder — only if it is not already there. Verifies the download
-# against the pinned SHA-256 passed by the caller (which selects it for the same
-# architecture, so the asset and checksum always agree).
+# destination folder — only if that version is not already there. Verifies the
+# download against the pinned SHA-256 passed by the caller (which selects it for the
+# same architecture, so the asset and checksum always agree). A
+# netcoredbg-<version>.stamp marker records which version the folder holds, so a
+# folder populated for another version is replaced rather than reused.
 #
 # Invoked by the FetchNetcoredbg MSBuild target. netcoredbg is MIT-licensed
 # (Samsung); see THIRD-PARTY-NOTICES.md. Fetched at build time rather than
@@ -16,7 +18,8 @@ SHA256="${2:?sha256 required}"
 DESTDIR="${3:?destDir required}"
 
 EXE="$DESTDIR/netcoredbg"
-[ -f "$EXE" ] && exit 0   # already present (regular file) — nothing to do
+STAMP="$DESTDIR/netcoredbg-$VERSION.stamp"   # same name as NetcoredbgStampName
+[ -f "$EXE" ] && [ -f "$STAMP" ] && exit 0   # this version is present — nothing to do
 
 case "$(uname -m)" in
   x86_64|amd64)  ASSET="netcoredbg-linux-amd64.tar.gz" ;;
@@ -42,7 +45,11 @@ tar -xzf "$TMP/$ASSET" -C "$TMP"
 SRC="$(dirname "$(find "$TMP" -name netcoredbg -type f | head -1)")"
 [ -n "$SRC" ] || { echo "netcoredbg not found inside $ASSET" >&2; exit 1; }
 
+# Replace (not merge into) an engine fetched for another version. Only a folder
+# that actually holds a netcoredbg is cleared, never an arbitrary DESTDIR.
+[ -f "$EXE" ] && rm -rf "$DESTDIR"
 mkdir -p "$DESTDIR"
 cp -r "$SRC/." "$DESTDIR/"
 chmod +x "$EXE"
+touch "$STAMP"
 echo "fetch-netcoredbg: installed to $DESTDIR"

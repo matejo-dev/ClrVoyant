@@ -1,7 +1,9 @@
 <#
 .SYNOPSIS
     Fetch the bundled netcoredbg (Windows x64) into a destination folder — only if
-    it is not already there. Verifies the download against a pinned SHA-256.
+    that version is not already there. Verifies the download against a pinned SHA-256.
+    A netcoredbg-<version>.stamp marker records which version the folder holds, so a
+    folder populated for another version is replaced rather than reused.
     Runs on Windows PowerShell 5.1 and PowerShell 7+ (no version-specific features).
 .NOTES
     Invoked by the FetchNetcoredbg MSBuild target. netcoredbg is MIT-licensed
@@ -16,7 +18,8 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $exe = Join-Path $DestDir 'netcoredbg.exe'
-if (Test-Path $exe -PathType Leaf) { return }   # already present (file) — nothing to do
+$stamp = Join-Path $DestDir "netcoredbg-$Version.stamp"   # same name as NetcoredbgStampName
+if ((Test-Path $exe -PathType Leaf) -and (Test-Path $stamp -PathType Leaf)) { return }   # this version is present
 
 $asset = 'netcoredbg-win64.zip'
 $url = "https://github.com/Samsung/netcoredbg/releases/download/$Version/$asset"
@@ -43,8 +46,12 @@ try {
     $found = Get-ChildItem $extract -Recurse -Filter 'netcoredbg.exe' | Select-Object -First 1
     if (-not $found) { throw "netcoredbg.exe not found inside $asset" }
 
+    # Replace (not merge into) an engine fetched for another version. Only a folder
+    # that actually holds a netcoredbg is cleared, never an arbitrary DestDir.
+    if (Test-Path $exe -PathType Leaf) { Remove-Item $DestDir -Recurse -Force }
     New-Item -ItemType Directory -Force -Path $DestDir | Out-Null
     Copy-Item (Join-Path $found.Directory.FullName '*') -Destination $DestDir -Recurse -Force
+    New-Item -ItemType File -Force -Path $stamp | Out-Null
     Write-Host "fetch-netcoredbg: installed to $DestDir"
 }
 finally {

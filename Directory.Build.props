@@ -34,6 +34,11 @@
     <NetcoredbgSha256Windows>c67ae052e0bcb9ce37000f261e2d397a0d5b6615cafe30c868239a78598dfb37</NetcoredbgSha256Windows>
     <NetcoredbgSha256Linux>3814341c028c81ff7eea03ac316ad92e9ad7d705d2a00e3e3df269cdc241c763</NetcoredbgSha256Linux>
     <NetcoredbgSha256LinuxArm64>fc9efb691a53932a7fac4b9f67af68ad0c2a4cbe59cb2c1a3c44c64959df2ba4</NetcoredbgSha256LinuxArm64>
+    <!-- Marker written next to a fetched/staged engine. Its NAME carries the version, so
+         a cache populated for an older pin is detected as stale and refetched after a
+         bump (existence of the binary alone says nothing about its version). The fetch
+         scripts derive the same name from the version they are given. -->
+    <NetcoredbgStampName>netcoredbg-$(NetcoredbgVersion).stamp</NetcoredbgStampName>
     <RepoToolsDir>$(MSBuildThisFileDirectory)tools</RepoToolsDir>
     <NetcoredbgCacheDir>$(RepoToolsDir)\netcoredbg</NetcoredbgCacheDir>
     <!-- Architecture of the current build process. The build-time fetch bundles the
