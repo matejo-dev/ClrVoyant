@@ -37,7 +37,7 @@ public static class LifecycleTools
         => sessions.AttachAsync(pid, cancellationToken);
 
     [McpServerTool(Name = "list_processes", Title = "List running processes", ReadOnly = true, OpenWorld = false)]
-    [Description("List running processes (pid, parent pid, name, isDotNet) so you can pick one to debug_attach. Defaults to .NET processes only. Useful in a shared-PID-namespace POD to find the app process to debug.")]
+    [Description("List running processes (pid, parent pid, name, isDotNet, commandLine) so you can pick one to debug_attach: most .NET targets are just named 'dotnet', so use the command line to tell them apart. Defaults to .NET processes only. Useful in a shared-PID-namespace POD to find the app process to debug. NOTE: command lines are returned as the OS reports them (cut at 1000 characters) and can contain secrets such as passwords or tokens passed as arguments; absent when the OS does not let the server read it.")]
     public static IReadOnlyList<ProcessInfo> ListProcesses(
         [Description("List only .NET (Core) processes. Set false to list every process.")] bool dotnetOnly = true)
         => ProcessLister.List(dotnetOnly);

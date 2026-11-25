@@ -255,7 +255,7 @@ public class IntegrationControlTests
             // The attached session is the real child of the launched parent, not some other process.
             var attached = sessions.Single(s => s.SessionId != parent.SessionId);
             Assert.Contains(attached.Pid,
-                ClrVoyant.Server.ProcessLister.Enumerate().Where(p => p.parentPid == parent.Pid).Select(p => p.pid));
+                ClrVoyant.Server.ProcessLister.Enumerate().Where(p => p.ParentPid == parent.Pid).Select(p => p.Pid));
             child = Process.GetProcessById(attached.Pid);
         }
         finally { await Cleanup(mgr); }

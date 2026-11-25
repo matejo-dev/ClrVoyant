@@ -53,7 +53,7 @@ public sealed record SessionOutput(string Text, bool Truncated, SessionState Sta
 
 /// <summary>A running OS process, for discovery before debug_attach (e.g. finding
 /// the app process inside a shared-PID-namespace POD).</summary>
-public sealed record ProcessInfo(int Pid, int ParentPid, string Name, bool IsDotNet);
+public sealed record ProcessInfo(int Pid, int ParentPid, string Name, bool IsDotNet, string? CommandLine = null);
 
 /// <summary>A method discovered in an assembly's metadata, for the no-source case:
 /// <paramref name="FullName"/> (Namespace.Type.Method) is ready to pass to

@@ -5,6 +5,7 @@ using ClrVoyant.Server;
 using ClrVoyant.Server.Tools;
 using ClrVoyant.Tests.Integration;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 
@@ -22,13 +23,11 @@ public class HttpTransportTests
     [Fact]
     public async Task Bearer_token_gates_the_endpoint_and_a_client_can_call_tools_repeatedly()
     {
-        var prev = Environment.GetEnvironmentVariable("CLRVOYANT_NETCOREDBG");
-        // The SessionManager singleton (resolved by a hosted service) locates netcoredbg at startup.
-        Environment.SetEnvironmentVariable("CLRVOYANT_NETCOREDBG", TestPaths.Netcoredbg);
+        var log = new RecordingLog();
         WebApplication? app = null;
         try
         {
-            app = HostFactory.BuildHttpApp([], Token, "http://127.0.0.1:0");
+            app = HostFactory.BuildHttpApp([], Token, "http://127.0.0.1:0", b => b.Logging.AddProvider(log));
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
             var ct = cts.Token;
             await app.StartAsync(ct);
@@ -76,6 +75,14 @@ public class HttpTransportTests
                 Assert.True(result.IsError != true);
                 Assert.StartsWith("ClrVoyant", Assert.IsType<TextContentBlock>(Assert.Single(result.Content)).Text);
             }
+
+            // Who called is on the record: every refusal and every call carries the caller's address, and a
+            // refusal says nothing about what was presented.
+            var audit = log.Lines(AuditLog.Category).ToList();
+            Assert.Equal(4, audit.Count(l => l == "auth -> denied remote=127.0.0.1"));
+            Assert.Contains("tools/call debug_status -> error (No active debug session.) remote=127.0.0.1", audit);
+            Assert.Equal(2, audit.Count(l => l == "tools/call get_debug_instructions -> ok remote=127.0.0.1"));
+            Assert.DoesNotContain(audit, l => l.Contains("wrong") || l.Contains(Token));
         }
         finally
         {
@@ -85,7 +92,6 @@ public class HttpTransportTests
                 await app.StopAsync(stop.Token);
                 await app.DisposeAsync();
             }
-            Environment.SetEnvironmentVariable("CLRVOYANT_NETCOREDBG", prev);
         }
     }
 }

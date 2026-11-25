@@ -3,120 +3,158 @@ using ClrVoyant.Server;
 
 namespace ClrVoyant.Tests;
 
-public class NetcoredbgLocatorTests
+/// <summary>
+/// Where the server looks for netcoredbg. Runs against a throwaway directory standing in for the
+/// server's own folder and a fake environment: never the real build output, never the process
+/// environment.
+/// </summary>
+public sealed class NetcoredbgLocatorTests : IDisposable
 {
-    const string EnvVar = "CLRVOYANT_NETCOREDBG";
+    const string Rid = "test-rid";
 
     static string ExeName => OperatingSystem.IsWindows() ? "netcoredbg.exe" : "netcoredbg";
 
-    static string BundledPath =>
-        Path.Combine(AppContext.BaseDirectory, "tools", "netcoredbg", ExeName);
+    readonly string _base = Path.Combine(Path.GetTempPath(), $"clrvoyant-locator-{Guid.NewGuid():N}");
+    readonly Dictionary<string, string?> _env = new();
 
-    static string? CurrentRid => (OperatingSystem.IsWindows(), RuntimeInformation.ProcessArchitecture) switch
+    public NetcoredbgLocatorTests()
     {
-        (true, Architecture.X64) => "win-x64",
-        (false, Architecture.X64) => "linux-x64",
-        (false, Architecture.Arm64) => "linux-arm64",
-        _ => null,
-    };
+        Directory.CreateDirectory(_base);
+        // Fetching must never reach the network or the real profile from here.
+        _env["CLRVOYANT_CACHE_DIR"] = Path.Combine(_base, "cache");
+        _env["CLRVOYANT_NO_FETCH"] = "1";
+    }
+
+    public void Dispose()
+    {
+        try { Directory.Delete(_base, recursive: true); } catch { /* best effort */ }
+    }
+
+    string Flat => Path.Combine(_base, "tools", "netcoredbg", ExeName);
+    string PerRid => Path.Combine(_base, "tools", "netcoredbg", Rid, ExeName);
+
+    string Touch(string path)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, "x");
+        return path;
+    }
+
+    string Resolve(string? rid = Rid) => NetcoredbgLocator.Resolve(_base, k => _env.GetValueOrDefault(k), rid);
+
+    // ---- the explicit override ----
 
     [Fact]
-    public void Resolve_prefers_per_rid_bundle_over_flat()
+    public void An_existing_override_wins_over_everything_bundled()
     {
-        // The packaged tool bundles every RID under tools/netcoredbg/<rid>/; the
-        // locator must pick the current host's RID even when a flat copy also exists.
-        if (CurrentRid is not { } rid) return; // unsupported host: nothing to assert
+        Touch(Flat);
+        Touch(PerRid);
+        string custom = Touch(Path.Combine(_base, "custom", ExeName));
+        _env["CLRVOYANT_NETCOREDBG"] = custom;
 
-        var prev = Environment.GetEnvironmentVariable(EnvVar);
-        var root = Path.Combine(AppContext.BaseDirectory, "tools", "netcoredbg");
-        var flat = Path.Combine(root, ExeName);
-        var ridPath = Path.Combine(root, rid, ExeName);
-        bool createdFlat = false, createdRid = false;
-        try
-        {
-            Environment.SetEnvironmentVariable(EnvVar, null);
-            if (!File.Exists(flat)) { Directory.CreateDirectory(root); File.WriteAllText(flat, "flat"); createdFlat = true; }
-            if (!File.Exists(ridPath)) { Directory.CreateDirectory(Path.GetDirectoryName(ridPath)!); File.WriteAllText(ridPath, "rid"); createdRid = true; }
-            Assert.Equal(ridPath, NetcoredbgLocator.Resolve());
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable(EnvVar, prev);
-            if (createdRid) File.Delete(ridPath);
-            if (createdFlat) File.Delete(flat);
-        }
+        Assert.Equal(custom, Resolve());
     }
 
     [Fact]
-    public void Resolve_prefers_env_var_when_file_exists()
+    public void An_override_pointing_nowhere_fails_loudly_instead_of_using_the_bundled_copy()
     {
-        var tmp = Path.Combine(Path.GetTempPath(), $"ncdbg_{Guid.NewGuid():N}.exe");
-        File.WriteAllText(tmp, "x");
-        var prev = Environment.GetEnvironmentVariable(EnvVar);
-        try
-        {
-            Environment.SetEnvironmentVariable(EnvVar, tmp);
-            Assert.Equal(tmp, NetcoredbgLocator.Resolve());
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable(EnvVar, prev);
-            File.Delete(tmp);
-        }
+        Touch(Flat); // would be a perfectly good engine, and must not be used behind the operator's back
+        string missing = Path.Combine(_base, "typo", ExeName);
+        _env["CLRVOYANT_NETCOREDBG"] = missing;
+
+        var ex = Assert.Throws<FileNotFoundException>(() => Resolve());
+
+        Assert.Contains("CLRVOYANT_NETCOREDBG", ex.Message);
+        Assert.Contains(missing, ex.Message);
     }
 
     [Fact]
-    public void Resolve_falls_back_to_bundled_copy()
+    public void An_override_pointing_to_a_directory_is_not_an_engine()
     {
-        var prev = Environment.GetEnvironmentVariable(EnvVar);
-        var bundled = BundledPath;
-        bool created = false;
-        try
-        {
-            Environment.SetEnvironmentVariable(EnvVar, null);
-            if (!File.Exists(bundled))
-            {
-                Directory.CreateDirectory(Path.GetDirectoryName(bundled)!);
-                File.WriteAllText(bundled, "x");
-                created = true;
-            }
-            Assert.Equal(bundled, NetcoredbgLocator.Resolve());
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable(EnvVar, prev);
-            if (created) File.Delete(bundled);
-        }
+        _env["CLRVOYANT_NETCOREDBG"] = _base;
+
+        var ex = Assert.Throws<FileNotFoundException>(() => Resolve());
+
+        Assert.Contains(_base, ex.Message);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void An_unset_or_blank_override_is_no_override(string? value)
+    {
+        Touch(Flat);
+        _env["CLRVOYANT_NETCOREDBG"] = value;
+
+        Assert.Equal(Flat, Resolve());
+    }
+
+    // ---- the bundled copies ----
+
+    [Fact]
+    public void The_per_rid_bundle_wins_over_the_flat_one()
+    {
+        // The packaged tool bundles every RID under tools/netcoredbg/<rid>/: the host's must be
+        // picked even when a flat copy exists too.
+        Touch(Flat);
+        Touch(PerRid);
+
+        Assert.Equal(PerRid, Resolve());
     }
 
     [Fact]
-    public void Resolve_throws_when_not_found_and_fetch_disabled()
+    public void A_bundle_for_another_rid_is_not_used()
     {
-        // With no env override, no bundled copy, an empty cache, and fetching
-        // disabled (CLRVOYANT_NO_FETCH), resolution fails with a clear error rather
-        // than downloading.
-        var prevEnv = Environment.GetEnvironmentVariable(EnvVar);
-        var prevCache = Environment.GetEnvironmentVariable("CLRVOYANT_CACHE_DIR");
-        var prevNoFetch = Environment.GetEnvironmentVariable("CLRVOYANT_NO_FETCH");
-        var bundled = BundledPath;
-        var backup = bundled + ".bak";
-        bool moved = false;
-        var emptyCache = Path.Combine(Path.GetTempPath(), $"clrvoyant-cache-{Guid.NewGuid():N}");
-        try
-        {
-            Environment.SetEnvironmentVariable(EnvVar, "C:\\does\\not\\exist\\netcoredbg.exe");
-            Environment.SetEnvironmentVariable("CLRVOYANT_CACHE_DIR", emptyCache);
-            Environment.SetEnvironmentVariable("CLRVOYANT_NO_FETCH", "1");
-            if (File.Exists(bundled)) { File.Move(bundled, backup, true); moved = true; }
-            Assert.Throws<FileNotFoundException>(() => NetcoredbgLocator.Resolve());
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable(EnvVar, prevEnv);
-            Environment.SetEnvironmentVariable("CLRVOYANT_CACHE_DIR", prevCache);
-            Environment.SetEnvironmentVariable("CLRVOYANT_NO_FETCH", prevNoFetch);
-            if (moved) File.Move(backup, bundled, true);
-            try { Directory.Delete(emptyCache, true); } catch { }
-        }
+        Touch(Path.Combine(_base, "tools", "netcoredbg", "some-other-rid", ExeName));
+        Touch(Flat);
+
+        Assert.Equal(Flat, Resolve());
+    }
+
+    [Fact]
+    public void Without_a_supported_rid_only_the_flat_bundle_applies()
+    {
+        Touch(PerRid);
+        Touch(Flat);
+
+        Assert.Equal(Flat, Resolve(rid: null));
+    }
+
+    [Fact]
+    public void The_flat_bundle_is_used_when_there_is_no_per_rid_one()
+    {
+        Touch(Flat);
+
+        Assert.Equal(Flat, Resolve());
+    }
+
+    // ---- nothing bundled: the user cache, or a message that says what to do ----
+
+    [Fact]
+    public void Nothing_bundled_and_fetching_disabled_names_the_override_and_the_reason()
+    {
+        var ex = Assert.Throws<FileNotFoundException>(() => Resolve());
+
+        Assert.Contains("CLRVOYANT_NETCOREDBG", ex.Message);
+        Assert.Contains("CLRVOYANT_NO_FETCH", ex.Message); // the fetcher's reason travels with it
+        Assert.IsType<InvalidOperationException>(ex.InnerException);
+    }
+
+    // ---- the RID of this host ----
+
+    [Fact]
+    public void The_rid_of_a_supported_host_matches_its_os_and_architecture()
+    {
+        string? rid = NetcoredbgLocator.CurrentRid();
+
+        if (OperatingSystem.IsWindows() && RuntimeInformation.ProcessArchitecture == Architecture.X64)
+            Assert.Equal("win-x64", rid);
+        else if (!OperatingSystem.IsWindows() && RuntimeInformation.ProcessArchitecture == Architecture.X64)
+            Assert.Equal("linux-x64", rid);
+        else if (!OperatingSystem.IsWindows() && RuntimeInformation.ProcessArchitecture == Architecture.Arm64)
+            Assert.Equal("linux-arm64", rid);
+        else
+            Assert.Null(rid);
     }
 }

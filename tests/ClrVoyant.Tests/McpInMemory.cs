@@ -82,6 +82,15 @@ static class McpInMemory
             services.AddClrVoyantMcpServer();
         }, act);
 
+    /// <summary>The real registration with the real netcoredbg-backed engine, whose executable is
+    /// looked up by <paramref name="locateEngine"/> (so a test can make it missing).</summary>
+    public static Task<ServerLogs> RunRealAsync(Func<string> locateEngine, Func<McpRun, Task> act)
+        => RunAsync(services =>
+        {
+            HostFactory.AddDebugServices(services, locateEngine: locateEngine);
+            services.AddClrVoyantMcpServer();
+        }, act);
+
     static async Task<ServerLogs> RunAsync(Action<IServiceCollection> configure, Func<McpRun, Task> act)
     {
         var logs = new ServerLogs();

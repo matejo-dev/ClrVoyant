@@ -31,6 +31,9 @@ internal static class TestPaths
     public static string SampleAppDllFor(string tfm) => FindBuiltDll("SampleApp", tfm);
     public static string ParentAppDllFor(string tfm) => FindBuiltDll("ParentApp", tfm);
 
+    /// <summary>The server as built by its own project (with the engine bundled next to it), runnable as a child process.</summary>
+    public static string ServerDll => FindBuilt("src", "ClrVoyant.Server", DefaultTfm);
+
     public static string SampleAppSrc => Path.Combine(RepoRoot, "samples", "SampleApp", "Program.cs");
 
     // Windows-only target: its build exists only on Windows.
@@ -108,7 +111,9 @@ internal static class TestPaths
         return cfgDir?.Parent?.Name == "bin" ? cfgDir.Name : null;
     }
 
-    static string FindBuiltDll(string project, string tfm)
+    static string FindBuiltDll(string project, string tfm) => FindBuilt("samples", project, tfm);
+
+    static string FindBuilt(string folder, string project, string tfm)
     {
         var configs = new List<string>();
         if (OwnConfiguration() is { } own) configs.Add(own);
@@ -117,7 +122,7 @@ internal static class TestPaths
 
         foreach (var cfg in configs)
         {
-            var p = Path.Combine(RepoRoot, "samples", project, "bin", cfg, tfm, $"{project}.dll");
+            var p = Path.Combine(RepoRoot, folder, project, "bin", cfg, tfm, $"{project}.dll");
             if (File.Exists(p)) return p;
         }
         throw new FileNotFoundException(

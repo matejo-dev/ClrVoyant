@@ -48,6 +48,9 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
 COPY --from=build /app .
 
+# The server itself listens on loopback unless told otherwise. A pod sidecar is reached through
+# the pod network (port-forward, Service), so the image opts in to all interfaces explicitly;
+# the bearer token remains the gate, and the server logs a warning at startup saying so.
 ENV CLRVOYANT_TRANSPORT=http \
     CLRVOYANT_HTTP_URL=http://0.0.0.0:3001
 # CLRVOYANT_AUTH_TOKEN is intentionally NOT set here — supply it at deploy time

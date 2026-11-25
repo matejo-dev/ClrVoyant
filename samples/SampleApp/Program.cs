@@ -20,6 +20,11 @@ await Task.Delay(200); // let the awaits park
 
 Console.WriteLine($"SampleApp PID={Process.GetCurrentProcess().Id}");
 
+// Test hook: announce the PID the way a VSTEST_HOST_DEBUG test host does, so the debug_test flow
+// can be driven with this app standing in for a real test run.
+if (Environment.GetEnvironmentVariable("SAMPLE_ANNOUNCE_TESTHOST") is not null)
+    Console.WriteLine($"Process Id: {Environment.ProcessId}, Name: SampleApp");
+
 // Test hook: when set, exit right away with this code, so tests can check that the
 // debugger reports the exit code and the stdout printed above.
 if (Environment.GetEnvironmentVariable("SAMPLE_EXIT_CODE") is { } exitCode)
