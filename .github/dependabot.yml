@@ -23,6 +23,10 @@ updates:
       # tool does not use); see the note next to its version in Directory.Packages.props.
       - dependency-name: Microsoft.Diagnostics.Runtime
         update-types: [version-update:semver-major]
+      # Versioned with the .NET runtime: its major moves with the target framework,
+      # as one deliberate change (see the docker entry below), not package by package.
+      - dependency-name: System.Management
+        update-types: [version-update:semver-major]
 
   # Base images in deploy/Dockerfile.
   - package-ecosystem: docker
@@ -32,3 +36,10 @@ updates:
     groups:
       docker-minor-patch:
         update-types: [minor, patch]
+    ignore:
+      # The .NET images follow the SDK pinned in global.json and the target framework.
+      # A new major is adopted in one change that moves all of them and validates the
+      # new runtime; a base-image bump alone breaks the build (the SDK image no longer
+      # contains the SDK global.json asks for) or ships an unvalidated runtime.
+      - dependency-name: dotnet/*
+        update-types: [version-update:semver-major]
