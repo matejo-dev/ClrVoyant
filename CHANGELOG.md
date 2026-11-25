@@ -10,6 +10,8 @@ project version or the release workflow fails.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-25
+
 ### Breaking
 
 - **The tool needs the .NET 10 runtime, including ASP.NET Core**, or a newer one through
@@ -161,7 +163,8 @@ project version or the release workflow fails.
 
 First release.
 
-[Unreleased]: https://github.com/matejo-dev/ClrVoyant/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/matejo-dev/ClrVoyant/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/matejo-dev/ClrVoyant/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/matejo-dev/ClrVoyant/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/matejo-dev/ClrVoyant/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/matejo-dev/ClrVoyant/releases/tag/v0.1.0

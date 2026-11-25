@@ -38,7 +38,7 @@
     <ToolCommandName>clrvoyant</ToolCommandName>
     <PackageId>ClrVoyant</PackageId>
     <IsPackable>true</IsPackable>
-    <Version>0.2.1</Version>
+    <Version>0.3.0</Version>
     <Description>A local MCP server that lets an agent debug .NET 8/9/10 apps headlessly — breakpoints, stepping, variables, and full async Task introspection (the "Tasks window" via ClrMD).</Description>
     <PackageTags>mcp;debugger;dotnet;netcoredbg;clrmd;async;tasks</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
