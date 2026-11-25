@@ -121,3 +121,44 @@ jobs:
             TestResults/**/coverage.cobertura.xml
           if-no-files-found: warn
           retention-days: 14
+
+  # The sidecar image is a shipped artifact, but nothing above builds it: a change that
+  # breaks deploy/Dockerfile (a base-image bump that no longer contains the SDK pinned
+  # in global.json, a moved publish path) would otherwise stay green. Build it, then
+  # check the two things a deployment relies on: the bundled engine starts inside the
+  # image, and the server answers MCP over HTTP only with the bearer token.
+  image:
+    name: sidecar image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build
+        run: docker build -f deploy/Dockerfile -t clrvoyant:ci .
+
+      - name: Engine starts and HTTP requires the token
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint /app/tools/netcoredbg/linux-x64/netcoredbg clrvoyant:ci --version
+
+          token=$(openssl rand -hex 16)
+          cid=$(docker run -d -p 127.0.0.1:3001:3001 -e CLRVOYANT_AUTH_TOKEN="$token" clrvoyant:ci)
+          trap 'docker logs "$cid" || true; docker rm -f "$cid" >/dev/null' EXIT
+
+          init='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}'
+          post() {
+            curl -s -X POST http://127.0.0.1:3001/               -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream'               -d "$init" "$@"
+          }
+          for _ in $(seq 1 30); do
+            code=$(post -o /dev/null -w '%{http_code}' || true)
+            [ "$code" != "000" ] && break
+            sleep 1
+          done
+
+          echo "without token: HTTP $code"
+          test "$code" = 401
+          response=$(post -H "Authorization: Bearer $token")
+          grep -o '"serverInfo":{"name":"ClrVoyant.Server"[^}]*}' <<<"$response"
