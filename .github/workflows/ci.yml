@@ -39,6 +39,12 @@ jobs:
           dotnet build samples/SampleApp/SampleApp.csproj -c Release
           dotnet build samples/ParentApp/ParentApp.csproj -c Release
 
+      # WinForms target for the native-frames call-stack test (Windows-only; the test
+      # is skipped on the Linux legs).
+      - name: Build Windows-only sample target
+        if: runner.os == 'Windows'
+        run: dotnet build samples/WinFormsApp/WinFormsApp.csproj -c Release
+
       # Builds the server (triggers the netcoredbg fetch) and runs the full suite,
       # including the integration tests that drive a real netcoredbg + ClrMD.
       # CLRVOYANT_PACKAGING_TESTS=1 also packs the tool, installs it from a local

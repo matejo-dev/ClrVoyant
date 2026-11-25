@@ -45,7 +45,8 @@
        (NetcoredbgFetcher, used when running as an installed tool with no bundled
        copy) knows exactly what to download for the current OS + architecture. -->
   <ItemGroup>
-    <AssemblyMetadata Include="NetcoredbgVersion" Value="$(NetcoredbgVersion)" />
+    <AssemblyMetadata Include="NetcoredbgVersionWindows" Value="$(NetcoredbgVersionWindows)" />
+    <AssemblyMetadata Include="NetcoredbgVersionLinux" Value="$(NetcoredbgVersionLinux)" />
     <AssemblyMetadata Include="NetcoredbgSha256Windows" Value="$(NetcoredbgSha256Windows)" />
     <AssemblyMetadata Include="NetcoredbgSha256Linux" Value="$(NetcoredbgSha256Linux)" />
     <AssemblyMetadata Include="NetcoredbgSha256LinuxArm64" Value="$(NetcoredbgSha256LinuxArm64)" />
@@ -93,11 +94,11 @@
        network access (CI / the packager), never the end user's machine. -->
   <Target Name="StageNetcoredbgRidsToPublish" AfterTargets="Publish">
     <MSBuild Projects="$(MSBuildThisFileFullPath)" Targets="StageOneNetcoredbgRid"
-             Properties="StageRid=win-x64;StageAsset=netcoredbg-win64.zip;StageSha=$(NetcoredbgSha256Windows);StageExe=netcoredbg.exe;StageIsZip=true;StageDestRoot=$(PublishDir)tools/netcoredbg" />
+             Properties="StageRid=win-x64;StageVersion=$(NetcoredbgVersionWindows);StageAsset=netcoredbg-win64.zip;StageSha=$(NetcoredbgSha256Windows);StageExe=netcoredbg.exe;StageIsZip=true;StageDestRoot=$(PublishDir)tools/netcoredbg" />
     <MSBuild Projects="$(MSBuildThisFileFullPath)" Targets="StageOneNetcoredbgRid"
-             Properties="StageRid=linux-x64;StageAsset=netcoredbg-linux-amd64.tar.gz;StageSha=$(NetcoredbgSha256Linux);StageExe=netcoredbg;StageIsZip=false;StageDestRoot=$(PublishDir)tools/netcoredbg" />
+             Properties="StageRid=linux-x64;StageVersion=$(NetcoredbgVersionLinux);StageAsset=netcoredbg-linux-amd64.tar.gz;StageSha=$(NetcoredbgSha256Linux);StageExe=netcoredbg;StageIsZip=false;StageDestRoot=$(PublishDir)tools/netcoredbg" />
     <MSBuild Projects="$(MSBuildThisFileFullPath)" Targets="StageOneNetcoredbgRid"
-             Properties="StageRid=linux-arm64;StageAsset=netcoredbg-linux-arm64.tar.gz;StageSha=$(NetcoredbgSha256LinuxArm64);StageExe=netcoredbg;StageIsZip=false;StageDestRoot=$(PublishDir)tools/netcoredbg" />
+             Properties="StageRid=linux-arm64;StageVersion=$(NetcoredbgVersionLinux);StageAsset=netcoredbg-linux-arm64.tar.gz;StageSha=$(NetcoredbgSha256LinuxArm64);StageExe=netcoredbg;StageIsZip=false;StageDestRoot=$(PublishDir)tools/netcoredbg" />
 
     <!-- Drop the single-RID flat copy that the build-output bundle leaves in publish:
          the package ships the per-RID layout only (no redundant host-RID duplicate).
@@ -114,10 +115,10 @@
        Parametrized via the MSBuild task above so the download/verify/extract logic
        lives in exactly one place. -->
   <Target Name="StageOneNetcoredbgRid"
-          Condition="!Exists('$(StageDestRoot)/$(StageRid)/$(StageExe)') Or !Exists('$(StageDestRoot)/$(StageRid)/$(NetcoredbgStampName)')">
+          Condition="!Exists('$(StageDestRoot)/$(StageRid)/$(StageExe)') Or !Exists('$(StageDestRoot)/$(StageRid)/netcoredbg-$(StageVersion).stamp')">
     <PropertyGroup>
       <_StageTmp>$(IntermediateOutputPath)ncdbg-stage/$(StageRid)</_StageTmp>
-      <_StageUrl>https://github.com/Samsung/netcoredbg/releases/download/$(NetcoredbgVersion)/$(StageAsset)</_StageUrl>
+      <_StageUrl>https://github.com/Samsung/netcoredbg/releases/download/$(StageVersion)/$(StageAsset)</_StageUrl>
     </PropertyGroup>
     <RemoveDir Directories="$(_StageTmp)" />
     <MakeDir Directories="$(_StageTmp)" />
@@ -154,7 +155,7 @@
     <RemoveDir Directories="$(StageDestRoot)/$(StageRid)" />
     <Copy SourceFiles="@(_StageFiles)"
           DestinationFiles="@(_StageFiles->'$(StageDestRoot)/$(StageRid)/%(RecursiveDir)%(Filename)%(Extension)')" />
-    <Touch Files="$(StageDestRoot)/$(StageRid)/$(NetcoredbgStampName)" AlwaysCreate="true" />
+    <Touch Files="$(StageDestRoot)/$(StageRid)/netcoredbg-$(StageVersion).stamp" AlwaysCreate="true" />
     <RemoveDir Directories="$(_StageTmp)" />
   </Target>
 

@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- Run on the NEWEST installed desktop runtime, not the 8.0 it is compiled for:
+         newer WinForms runtimes put a managed-but-not-IL frame (the ShowWindow
+         P/Invoke) on the stack this target breaks on, which is exactly the case the
+         integration test guards. Built against net8.0 so any supported SDK builds it. -->
+    <RollForward>LatestMajor</RollForward>
+    <!-- Windows-only target, but part of the solution: lets `dotnet build
+         ClrVoyant.slnx` still succeed on Linux (it compiles; it only RUNS on Windows). -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <!-- Debug target for the integration tests: unoptimized so lines are deterministic
+         (see SampleApp for the rationale). -->
+    <Optimize>false</Optimize>
+    <DebugType>portable</DebugType>
+    <DebugSymbols>true</DebugSymbols>
+  </PropertyGroup>
+
+</Project>

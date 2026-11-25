@@ -21,8 +21,11 @@ internal static class NetcoredbgFetcher
 
     public static string EnsureInUserCache()
     {
-        string version = Meta("NetcoredbgVersion") ?? throw new InvalidOperationException("netcoredbg version metadata missing.");
         bool win = OperatingSystem.IsWindows();
+        // The pin is per platform (see Directory.Build.props), so the version follows
+        // the RUNNING OS, not the OS the package was built on.
+        string version = Meta(win ? "NetcoredbgVersionWindows" : "NetcoredbgVersionLinux")
+            ?? throw new InvalidOperationException("netcoredbg version metadata missing.");
         string exeName = win ? "netcoredbg.exe" : "netcoredbg";
 
         // Pick the OS+architecture asset and its pinned checksum. Only the
