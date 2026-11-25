@@ -8,7 +8,6 @@
 
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
-    <PackageReference Include="Microsoft.Extensions.Hosting" />
     <PackageReference Include="ModelContextProtocol" />
     <PackageReference Include="ModelContextProtocol.AspNetCore" />
     <PackageReference Include="System.Management" />
@@ -20,9 +19,13 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!-- A global tool runs on whatever runtime the machine has. Without this, a
+         net10.0 tool refuses to start on a machine that only has a newer runtime
+         (e.g. .NET 11); Major lets it roll forward. Debug TARGETS are unaffected. -->
+    <RollForward>Major</RollForward>
     <!-- No PlatformTarget pin (AnyCPU): the server runs at the host architecture so
          the in-process ClrMD inspector and netcoredbg match the co-located target.
          Supported hosts/targets: win-x64, linux-x64, linux-arm64. -->
@@ -35,10 +38,13 @@
     <ToolCommandName>clrvoyant</ToolCommandName>
     <PackageId>ClrVoyant</PackageId>
     <IsPackable>true</IsPackable>
-    <Version>0.2.1</Version>
+    <Version>0.3.0</Version>
     <Description>A local MCP server that lets an agent debug .NET 8/9/10 apps headlessly — breakpoints, stepping, variables, and full async Task introspection (the "Tasks window" via ClrMD).</Description>
     <PackageTags>mcp;debugger;dotnet;netcoredbg;clrmd;async;tasks</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
+    <!-- Symbol package (.snupkg) next to the tool, for source-level debugging of it. -->
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
   </PropertyGroup>
 
   <!-- Pinned netcoredbg coordinates baked into the assembly so the runtime fetch
@@ -53,7 +59,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The package redistributes netcoredbg (MIT, notice required): ship the licence
+         and the third-party notices alongside the readme. -->
     <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+    <None Include="..\..\LICENSE" Pack="true" PackagePath="\" />
+    <None Include="..\..\THIRD-PARTY-NOTICES.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
   <!-- netcoredbg is fetched at build time (pinned version, SHA-256 verified) into

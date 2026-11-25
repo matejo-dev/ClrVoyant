@@ -16,12 +16,25 @@ public interface IDebugEngine : IAsyncDisposable
     SessionState State { get; }
 
     event Action<StopLocation>? Stopped;
-    event Action<int>? Exited;
+    /// <summary>Raised exactly once when the debuggee ends (it exited, or
+    /// <see cref="TerminateAsync"/> ended it), with its exit code when the debugger
+    /// reported one.</summary>
+    event Action<int?>? Exited;
+    /// <summary>Raised at most once when the debugger itself is lost (the adapter died or
+    /// its connection closed) before the debuggee's end was reported; the argument says
+    /// why. <see cref="State"/> is Faulted from then on. Not raised for an end this
+    /// engine caused through <see cref="TerminateAsync"/> or disposal.</summary>
+    event Action<string>? Faulted;
+    /// <summary>Debuggee (and debugger) output as it arrives.</summary>
+    event Action<DebugOutput>? Output;
 
     // --- Lifecycle ---
     Task LaunchAsync(LaunchRequest request, CancellationToken ct = default);
     Task AttachAsync(int pid, CancellationToken ct = default);
-    Task TerminateAsync(CancellationToken ct = default);
+    /// <summary>End the session. With <paramref name="terminateDebuggee"/> the debuggee
+    /// is killed; otherwise the debugger detaches and leaves it running. Bounded: it
+    /// returns promptly even if the debugger is dead or unresponsive.</summary>
+    Task TerminateAsync(bool terminateDebuggee, CancellationToken ct = default);
 
     // --- Breakpoints ---
     Task<IReadOnlyList<Breakpoint>> SetBreakpointsAsync(string file, IReadOnlyList<BreakpointRequest> breakpoints, CancellationToken ct = default);
@@ -37,7 +50,9 @@ public interface IDebugEngine : IAsyncDisposable
     Task<IReadOnlyList<ThreadInfo>> GetThreadsAsync(CancellationToken ct = default);
     Task<IReadOnlyList<StackFrame>> GetStackTraceAsync(int threadId, int startFrame, int levels, CancellationToken ct = default);
     Task<IReadOnlyList<Scope>> GetScopesAsync(int frameId, CancellationToken ct = default);
-    Task<IReadOnlyList<Variable>> GetVariablesAsync(int variablesReference, CancellationToken ct = default);
+    /// <summary>The children of <paramref name="variablesReference"/>, starting at child
+    /// <paramref name="start"/>, at most <paramref name="count"/> of them (0 = no limit).</summary>
+    Task<IReadOnlyList<Variable>> GetVariablesAsync(int variablesReference, int start, int count, CancellationToken ct = default);
     Task<EvaluateResult> EvaluateAsync(string expression, int? frameId, string? context, CancellationToken ct = default);
     Task<ExceptionInfo?> GetExceptionInfoAsync(int threadId, CancellationToken ct = default);
 }

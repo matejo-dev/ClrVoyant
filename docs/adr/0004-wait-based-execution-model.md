@@ -42,3 +42,22 @@ message otherwise.
 - **Streaming/notifications for stops** — heavier protocol surface; the blocking
   model already gives deterministic results. Rejected for now;
   `wait_for_any_stop` covers the multi-session "which one broke?" case.
+
+## Update (2026-11-25)
+
+The model is unchanged; its edge cases are now defined.
+
+- **Cancellation is not a timeout.** A client cancelling `continue`/`step_*`
+  surfaces as cancellation. The waiter is disarmed, so the next real stop is reported
+  as a spontaneous one instead of being swallowed. A timeout still returns the current
+  state (`Running`) as a result.
+- **One resume at a time per session.** A second `continue`/`step_*` while one is
+  waiting is rejected: queuing it would silently resume the target again at the first
+  one's stop. A resume whose command is rejected by the debugger also disarms its
+  waiter.
+- **A third outcome, `Faulted`.** If the debugger connection is lost (netcoredbg died),
+  a waiting resume ends promptly with state `Faulted` and a message, instead of
+  sitting out its timeout. `StopOutcome` also carries `exitCode` for `Exited`.
+- The DAP client underneath fails fast: every request has a timeout (default 30 s)
+  and is cancellable, and when the adapter ends, pending and later requests fail with
+  its exit code and the tail of its stderr.

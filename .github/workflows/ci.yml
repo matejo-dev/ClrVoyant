@@ -5,10 +5,23 @@ on:
     branches: [main]
   pull_request:
 
+# Least privilege: this workflow only reads the repository.
+permissions:
+  contents: read
+
+# A newer push to the same PR supersedes the previous run; runs on main are
+# never cancelled (every commit on main keeps its own result).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     name: build & test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    # Integration tests drive a real debugger; a hung run must not hold a runner
+    # for the 6-hour default.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -17,55 +30,94 @@ jobs:
         # covered — netcoredbg ships no win-arm64 build.
         os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest]
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          dotnet-version: '8.0.x'
+          persist-credentials: false
+
+      # The 10.0 SDK builds and tests the product. The 8.0 and 9.0 SDKs are
+      # installed only for their runtimes: the sample debuggees are multi-targeted
+      # (net8.0;net9.0;net10.0) and the integration tests run against each target
+      # runtime (see CLRVOYANT_REQUIRE_TARGET_RUNTIMES below).
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: |
+            10.0.x
+            9.0.x
+            8.0.x
 
       # netcoredbg is fetched at build time (pinned + SHA-256 verified); cache it
       # so each run downloads at most once per version.
       - name: Cache netcoredbg
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: tools/netcoredbg
           # runner.arch keeps the x64 and arm64 Linux caches separate (the binary differs).
           key: netcoredbg-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Directory.Build.props') }}
 
-      # Sample targets are launched as external processes by the integration tests,
-      # so build them explicitly (they are not project references of the test app).
-      - name: Build sample targets
-        run: |
-          dotnet build samples/SampleApp/SampleApp.csproj -c Release
-          dotnet build samples/ParentApp/ParentApp.csproj -c Release
-
-      # WinForms target for the native-frames call-stack test (Windows-only; the test
-      # is skipped on the Linux legs).
-      - name: Build Windows-only sample target
-        if: runner.os == 'Windows'
-        run: dotnet build samples/WinFormsApp/WinFormsApp.csproj -c Release
-
-      # Builds the server (triggers the netcoredbg fetch) and runs the full suite,
-      # including the integration tests that drive a real netcoredbg + ClrMD.
+      # Builds the server (triggers the netcoredbg fetch) and the sample debuggees for
+      # every target runtime (the test project builds them itself), then runs the full
+      # suite, including the integration tests that drive a real netcoredbg + ClrMD.
       # CLRVOYANT_PACKAGING_TESTS=1 also packs the tool, installs it from a local
       # feed, and drives a real debug loop through the installed `clrvoyant` with
       # fetching disabled — so each runner validates its own RID's bundled engine.
+      #
+      # --blame-hang-timeout aborts the test host if a single test hangs for 10
+      # minutes (no dump: a full dump of a debugger-driving host is huge) and
+      # reports which test it was. Coverage is collected with coverlet.runsettings
+      # (cobertura); TRX is written next to it for the artifact upload below.
       - name: Test
-        run: dotnet test tests/ClrVoyant.Tests/ClrVoyant.Tests.csproj -c Release
+        run: >
+          dotnet test tests/ClrVoyant.Tests/ClrVoyant.Tests.csproj -c Release
+          --settings coverlet.runsettings
+          --collect:"XPlat Code Coverage"
+          --logger "trx;LogFileName=test-results.trx"
+          --results-directory ./TestResults
+          --blame-hang-timeout 10m
+          --blame-hang-dump-type none
         env:
           CLRVOYANT_PACKAGING_TESTS: '1'
+          # All three target runtimes are installed above, so a per-runtime test that
+          # cannot find its runtime must fail here instead of being skipped.
+          CLRVOYANT_REQUIRE_TARGET_RUNTIMES: '1'
+          # dotnet test (SDK 10) refuses its per-session artifacts directory on the
+          # hosted Linux runners ("can be accessed by users other than its owner" under
+          # /run/user) and then exits 1 even when every test passed. The directory is on
+          # an ephemeral single-tenant runner, so skip that check here.
+          VSTEST_DISABLE_ARTIFACTS_DIRECTORY_VERIFICATION: '1'
 
       # The runner's glibc/libstdc++ is newer than what we support, so the tests above
       # cannot see a netcoredbg bump that raises the Linux baseline (3.2.0-1092 needs
       # glibc 2.38 and does not start on Debian 12). Start the bundled engine on the
       # oldest supported bases: the sidecar's runtime image (read from
       # deploy/Dockerfile, so the check follows it) and Ubuntu 22.04 (README floor).
+      # Uses no third-party action; the engine is the one the build above fetched for
+      # this leg's OS and architecture.
       - name: Linux engine starts on the oldest supported distros
         if: runner.os == 'Linux'
         run: |
+          set -euo pipefail
           runtime_image=$(sed -n 's/^FROM \([^ ]*\) AS runtime.*/\1/p' deploy/Dockerfile)
           test -n "$runtime_image"
           for image in "$runtime_image" ubuntu:22.04; do
             echo "== $image"
             docker run --rm -v "$PWD/tools/netcoredbg:/ncdbg:ro" "$image" /ncdbg/netcoredbg --version
           done
+
+      # pwsh is preinstalled on all three runner images; the script prints a
+      # Markdown coverage table to the job summary (no threshold gate).
+      - name: Coverage summary
+        if: always()
+        shell: pwsh
+        run: ./scripts/coverage-summary.ps1 -ResultsDirectory ./TestResults -Title "Coverage (${{ matrix.os }})"
+
+      - name: Upload test results and coverage
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          # The matrix leg is part of the name: v4+ artifacts must be unique per run.
+          name: test-results-${{ matrix.os }}
+          path: |
+            TestResults/**/*.trx
+            TestResults/**/coverage.cobertura.xml
+          if-no-files-found: warn
+          retention-days: 14

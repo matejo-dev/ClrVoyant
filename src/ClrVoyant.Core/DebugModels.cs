@@ -36,12 +36,24 @@ public sealed record FunctionBreakpoint(
     int? Line);
 
 /// <summary>Result of a resume operation (continue / step): the resulting state
-/// and, when stopped, where.</summary>
-public sealed record StopOutcome(SessionState State, StopLocation? Stop);
+/// and, when stopped, where. When the process exited, <paramref name="ExitCode"/> is
+/// its exit code (null if the debugger did not report one). <paramref name="Message"/>
+/// explains a Faulted outcome (the debugger connection was lost).</summary>
+public sealed record StopOutcome(SessionState State, StopLocation? Stop, int? ExitCode = null, string? Message = null);
+
+/// <summary>A chunk of debuggee output as reported by the debugger. <paramref name="Category"/>
+/// is the DAP output category (typically stdout or stderr; console for the debugger's
+/// own messages).</summary>
+public sealed record DebugOutput(string Category, string Text);
+
+/// <summary>The captured tail of a session's debuggee output (get_output).
+/// <paramref name="Truncated"/> is true when earlier output is not included, either
+/// dropped by the capture cap or cut by the requested limit.</summary>
+public sealed record SessionOutput(string Text, bool Truncated, SessionState State, int? ExitCode);
 
 /// <summary>A running OS process, for discovery before debug_attach (e.g. finding
 /// the app process inside a shared-PID-namespace POD).</summary>
-public sealed record ProcessInfo(int Pid, int ParentPid, string Name, bool IsDotNet);
+public sealed record ProcessInfo(int Pid, int ParentPid, string Name, bool IsDotNet, string? CommandLine = null);
 
 /// <summary>A method discovered in an assembly's metadata, for the no-source case:
 /// <paramref name="FullName"/> (Namespace.Type.Method) is ready to pass to
@@ -60,7 +72,7 @@ public sealed record EvaluateResult(string Result, string Type, int VariablesRef
 
 public sealed record ExceptionInfo(string TypeName, string Description, string? Details);
 
-/// <summary>A managed Task discovered on the heap (Phase 4, ClrMD).</summary>
+/// <summary>A managed Task discovered on the heap (read with ClrMD).</summary>
 public sealed record TaskInfo(
     long TaskId,
     string Address,
@@ -69,7 +81,7 @@ public sealed record TaskInfo(
     string? AsyncMethod,
     string? Continuation);
 
-/// <summary>A node in the async await/continuation graph (Phase 5).
+/// <summary>A node in the async await/continuation graph.
 /// <paramref name="Awaiting"/> are the addresses of Tasks this state machine is
 /// parked on; <paramref name="ContinuationAddress"/> is the Task resumed when
 /// this one completes.</summary>

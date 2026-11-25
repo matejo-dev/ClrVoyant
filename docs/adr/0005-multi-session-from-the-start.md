@@ -33,3 +33,20 @@ agent can learn which process broke first.
 - **Single session, add multi later** — simpler initially, but the wait model and
   handle identity would need reworking; the user explicitly debugs multiple
   async-starting processes. Rejected.
+
+## Update (2026-11-25)
+
+- **What `wait_for_any_stop` fans in.** Besides stops, it now carries a process that
+  exits and a lost debugger connection, when no resume was waiting for them. The
+  result is a `SessionStop` with `state` `Stopped`, `Exited` or `Faulted`.
+- **Stale events are skipped.** Each queued event remembers the session's stop
+  sequence; when read, it is dropped unless it still describes the session (not
+  resumed, not stopped again, not restarted, not removed). The tool no longer returns
+  an event that is no longer true.
+- **Active-session fallback.** A spontaneous stop makes its session active. When the
+  active session ends, the only remaining session becomes active; with several left
+  none is, and a tool called without `sessionId` fails with a message listing the ids.
+  A session whose start fails is unregistered and the previously active session is
+  restored.
+- Session start (launch, attach, auto-attach) is transactional: a failure leaves no
+  ghost session and no orphaned netcoredbg.

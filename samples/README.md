@@ -6,8 +6,11 @@ like any project) and are part of the solution (`ClrVoyant.slnx`).
 
 They are **not** bundled into the server and **not** referenced as project
 dependencies — the tests/smokes launch them as *external* processes (which is the
-whole point: ClrVoyant attaches to a real, separate .NET process). The tests build
-them on demand (`TestPaths` locates the built DLL); CI builds them explicitly.
+whole point: ClrVoyant attaches to a real, separate .NET process). The test project
+builds them itself (a plain `dotnet test tests/ClrVoyant.Tests` is enough; `TestPaths`
+locates the built DLL), for every target framework the tests debug. `SampleApp` and
+`ParentApp` are multi-targeted (`net8.0;net9.0;net10.0`) so the runtime-sensitive tests
+can run once per target runtime; `WinFormsApp` is Windows only.
 
 | Project | What it exercises |
 |---|---|
@@ -18,7 +21,8 @@ them on demand (`TestPaths` locates the built DLL); CI builds them explicitly.
 Build them standalone with:
 
 ```sh
-dotnet build samples/SampleApp/SampleApp.csproj -c Debug
+dotnet build samples/SampleApp/SampleApp.csproj -c Debug            # all three frameworks
+dotnet build samples/SampleApp/SampleApp.csproj -c Debug -f net10.0 # one of them
 dotnet build samples/ParentApp/ParentApp.csproj -c Debug
 dotnet build samples/WinFormsApp/WinFormsApp.csproj -c Debug   # Windows only
 ```

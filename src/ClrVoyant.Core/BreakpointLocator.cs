@@ -38,6 +38,15 @@ public static class BreakpointLocator
             "pass a 'line' hint to pick the intended one.");
     }
 
+    /// <summary>Read <paramref name="file"/> and resolve <paramref name="content"/> in it with
+    /// <see cref="ResolveLine"/>. This is the only file IO of the locator; the matching itself stays pure.</summary>
+    /// <exception cref="IOException">The file cannot be read.</exception>
+    public static async Task<int> ResolveInFileAsync(string file, string content, int? lineHint = null, CancellationToken ct = default)
+    {
+        string[] lines = await File.ReadAllLinesAsync(Path.GetFullPath(file), ct);
+        return ResolveLine(lines, content, lineHint);
+    }
+
     static List<int> Find(IReadOnlyList<string> lines, Func<string, bool> predicate)
     {
         var hits = new List<int>();

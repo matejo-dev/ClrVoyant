@@ -1,0 +1,73 @@
+name: Bug report
+description: Something does not work as documented
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Most problems with a debugger depend on the environment, so the details below
+        are what make a report reproducible. Do not paste secrets: tokens, connection
+        strings and command lines of other processes can end up in tool output.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you got instead. Include the exact error text of the tool call.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: The tool calls (or the prompt) that lead to the problem, as small as you can make them.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: ClrVoyant version
+      description: The version shown by `dotnet tool list -g`, or the image tag for the sidecar.
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system and architecture of the machine running ClrVoyant
+      options:
+        - Windows x64
+        - Linux x64
+        - Linux arm64
+        - Other (say which in "What happened")
+    validations:
+      required: true
+  - type: input
+    id: distro
+    attributes:
+      label: Linux distribution and version
+      description: Only for Linux, for example "Ubuntu 24.04" or "Debian 12". The bundled debugger needs a minimum glibc.
+  - type: input
+    id: target-runtime
+    attributes:
+      label: .NET version of the program being debugged
+      description: For example "net8.0" or "net10.0".
+    validations:
+      required: true
+  - type: input
+    id: client
+    attributes:
+      label: MCP client and transport
+      description: For example "Claude Code, stdio" or "sidecar over HTTP".
+    validations:
+      required: true
+  - type: textarea
+    id: status
+    attributes:
+      label: Output of debug_status and get_output
+      description: If a session exists when the problem occurs. Remove anything sensitive.
+      render: text
+  - type: textarea
+    id: logs
+    attributes:
+      label: Server log
+      description: What the server wrote to stderr around the failure, if you have it.
+      render: text

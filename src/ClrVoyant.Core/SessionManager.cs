@@ -13,18 +13,26 @@ public sealed class SessionManager : IAsyncDisposable
 {
     readonly Func<IDebugEngine> _engineFactory;
     readonly ConcurrentDictionary<string, Session> _sessions = new();
-    readonly Channel<SessionStop> _stops = Channel.CreateUnbounded<SessionStop>();
+    readonly Channel<QueuedStop> _stops = Channel.CreateUnbounded<QueuedStop>();
     int _counter;
     volatile string? _activeId;
 
     public SessionManager(Func<IDebugEngine> engineFactory) => _engineFactory = engineFactory;
 
-    public async Task<SessionInfo> LaunchAsync(LaunchRequest req, CancellationToken ct = default)
+    /// <summary>An event waiting to be read by wait_for_any_stop, with the session's stop
+    /// sequence when it happened (see <see cref="Session.IsCurrent"/>).</summary>
+    sealed record QueuedStop(SessionStop Stop, long StopId);
+
+    /// <summary>Raised with the process id when a debugged process is gone (see
+    /// <see cref="Session.DebuggeeEnded"/>), for whichever session had it. Per-process
+    /// caches in other layers hook this to drop their entry for the pid.</summary>
+    public event Action<int>? DebuggeeEnded;
+
+    public Task<SessionInfo> LaunchAsync(LaunchRequest req, CancellationToken ct = default)
     {
-        var session = CreateSession();
-        session.LaunchInfo = req; // remember it so the session can be restarted
-        await session.Engine.LaunchAsync(req, ct);
-        return session.ToInfo();
+        ValidateEnv(req.Env);
+        // A failed launch has already started a debuggee (or may have): end it.
+        return StartAsync(s => s.LaunchInfo = req, s => s.Engine.LaunchAsync(req, ct), terminateOnFailure: true);
     }
 
     /// <summary>Restart a launched session in place (same id, same breakpoints).
@@ -40,25 +48,65 @@ public sealed class SessionManager : IAsyncDisposable
         return s.ToInfo();
     }
 
-    public async Task<SessionInfo> AttachAsync(int pid, CancellationToken ct = default)
+    public Task<SessionInfo> AttachAsync(int pid, CancellationToken ct = default)
+        => StartAsync(null, s => s.Engine.AttachAsync(pid, ct), terminateOnFailure: false);
+
+    /// <summary>Attach to a process discovered as a child of session <paramref name="parentSessionId"/>
+    /// (auto-attach). The child inherits the parent's ownership: if this server owns the
+    /// parent's debuggee, the child is part of a process tree the server started and ends with
+    /// its session; if the parent was merely attached, so is the child, and it is detached.</summary>
+    public Task<SessionInfo> AttachChildAsync(int pid, string parentSessionId, CancellationToken ct = default)
     {
+        bool owned = Resolve(parentSessionId).OwnsDebuggee;
+        return StartAsync(s => s.OwnedByParent = owned, s => s.Engine.AttachAsync(pid, ct), terminateOnFailure: false);
+    }
+
+    // Creating a session is transactional: the session is registered (and active) while it
+    // starts, so a failure — bad path, attach denied, timeout, cancellation — unregisters it,
+    // restores the previously active session and ends its engine, leaving no ghost session and
+    // no orphaned netcoredbg. A failed attach must never kill the process it tried to attach to.
+    async Task<SessionInfo> StartAsync(Action<Session>? init, Func<Session, Task> start, bool terminateOnFailure)
+    {
+        string? previousActive = _activeId;
         var session = CreateSession();
-        await session.Engine.AttachAsync(pid, ct);
-        return session.ToInfo();
+        try
+        {
+            init?.Invoke(session);
+            await start(session);
+            return session.ToInfo();
+        }
+        catch
+        {
+            _sessions.TryRemove(session.Id, out _);
+            if (_activeId == session.Id)
+                _activeId = previousActive is not null && _sessions.ContainsKey(previousActive) ? previousActive : null;
+            try { await EndAsync(session, terminateOnFailure, CancellationToken.None); } catch { /* the original failure is the one to report */ }
+            throw;
+        }
+    }
+
+    // Terminate (or detach) and dispose; the session is disposed even if the engine's end fails.
+    static async Task EndAsync(Session s, bool terminateDebuggee, CancellationToken ct)
+    {
+        try { await s.Engine.TerminateAsync(terminateDebuggee, ct); }
+        finally { await s.DisposeAsync(); }
     }
 
     Session CreateSession()
     {
         var id = $"s{Interlocked.Increment(ref _counter)}";
         var session = new Session(id, _engineFactory());
-        // Only stops that no resume operation was waiting for are fanned in here
-        // (e.g. a breakpoint hit while idle, or stopAtEntry). Targeted stops from
-        // continue/step are consumed by ResumeAndWaitAsync.
-        session.SpontaneousStop += (s, loc) =>
+        // Only events that no resume operation was waiting for are fanned in here (a
+        // breakpoint hit while idle, stopAtEntry, a process exiting unobserved). Events
+        // consumed by continue/step never reach this. A session that is no longer
+        // registered (stopped, or its start failed) has nothing to report.
+        session.SpontaneousStop += (s, stop, stopId) =>
         {
-            _activeId = s.Id;
-            _stops.Writer.TryWrite(new SessionStop(s.Id, loc));
+            if (!_sessions.ContainsKey(s.Id)) return;
+            if (stop.State == SessionState.Stopped) _activeId = s.Id;
+            _stops.Writer.TryWrite(new QueuedStop(stop, stopId));
         };
+        session.DebuggeeEnded += pid => DebuggeeEnded?.Invoke(pid);
         _sessions[id] = session;
         _activeId = id;
         return session;
@@ -66,8 +114,14 @@ public sealed class SessionManager : IAsyncDisposable
 
     public Session Resolve(string? sessionId)
     {
-        var id = sessionId ?? _activeId
-            ?? throw new InvalidOperationException("No active debug session.");
+        var id = sessionId ?? _activeId;
+        if (id is null)
+        {
+            var ids = _sessions.Keys.Order(StringComparer.Ordinal).ToList();
+            throw new InvalidOperationException(ids.Count == 0
+                ? "No active debug session."
+                : $"No active debug session; {ids.Count} sessions exist ({string.Join(", ", ids)}): pass sessionId.");
+        }
         if (!_sessions.TryGetValue(id, out var s))
             throw new KeyNotFoundException($"Unknown sessionId '{id}'.");
         return s;
@@ -76,27 +130,59 @@ public sealed class SessionManager : IAsyncDisposable
     public IReadOnlyList<SessionInfo> List()
         => _sessions.Values.Select(s => s.ToInfo()).ToList();
 
-    public async Task StopAsync(string? sessionId, CancellationToken ct = default)
+    // An environment variable name must be non-empty and contain no '=', or the debugger
+    // would split it into a different name/value than the caller meant.
+    static void ValidateEnv(IReadOnlyDictionary<string, string>? env)
     {
-        var s = Resolve(sessionId);
-        _sessions.TryRemove(s.Id, out _);
-        if (_activeId == s.Id) _activeId = _sessions.Keys.FirstOrDefault();
-        try { await s.Engine.TerminateAsync(ct); }
-        finally { await s.DisposeAsync(); }
+        if (env is null) return;
+        foreach (var name in env.Keys)
+            if (name.Length == 0 || name.Contains('='))
+                throw new ArgumentException($"Invalid environment variable name '{name}': it must be non-empty and must not contain '='.");
     }
 
+    /// <summary>End a session. By default the debuggee is killed only if this server
+    /// owns it (<see cref="Session.OwnsDebuggee"/>: launched, or the host behind
+    /// debug_test, or an auto-attached child of such a session); a process the session
+    /// merely attached to is detached and left running. <paramref name="terminate"/>
+    /// overrides that either way. The session is removed first and always disposed, even
+    /// if ending the engine fails. If the active session ends, the only remaining one
+    /// becomes active; with several left none is, so tools must be told which.</summary>
+    public async Task StopAsync(string? sessionId, bool? terminate = null, CancellationToken ct = default)
+    {
+        var s = Resolve(sessionId);
+        if (!_sessions.TryRemove(s.Id, out _))
+            throw new KeyNotFoundException($"Session '{s.Id}' has already ended.");
+        if (_activeId == s.Id)
+        {
+            var remaining = _sessions.Keys.ToList();
+            _activeId = remaining.Count == 1 ? remaining[0] : null;
+        }
+        await EndAsync(s, terminate ?? s.OwnsDebuggee, ct);
+    }
+
+    /// <summary>Wait for the next stop, exit or lost connection of any session, or return
+    /// null on timeout. Events that no longer describe their session (it resumed, stopped
+    /// again, restarted or was removed since) are skipped. Cancelling <paramref name="ct"/>
+    /// throws <see cref="OperationCanceledException"/>; it is not a timeout.</summary>
     public async Task<SessionStop?> WaitForAnyStopAsync(TimeSpan timeout, CancellationToken ct = default)
     {
-        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        cts.CancelAfter(timeout);
-        SessionStop stop;
-        try { stop = await _stops.Reader.ReadAsync(cts.Token); }
-        catch (OperationCanceledException) { return null; }
-
-        // Enrich with file/line (the raw stop event carries only reason+thread).
-        if (_sessions.TryGetValue(stop.SessionId, out var s))
-            stop = stop with { Stop = await s.EnrichAsync(stop.Stop, ct) };
-        return stop;
+        using var window = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        window.CancelAfter(timeout);
+        try
+        {
+            while (true)
+            {
+                var queued = await _stops.Reader.ReadAsync(window.Token);
+                var stop = queued.Stop;
+                if (!_sessions.TryGetValue(stop.SessionId, out var s) || !s.IsCurrent(stop, queued.StopId))
+                    continue;
+                // Enrich with file/line (the raw stop event carries only reason+thread).
+                return stop.State == SessionState.Stopped
+                    ? stop with { Stop = await s.EnrichAsync(stop.Stop!, ct) }
+                    : stop;
+            }
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested) { return null; }
     }
 
     public async ValueTask DisposeAsync()

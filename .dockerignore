@@ -1,12 +1,19 @@
 # Keep the build context small and OS-clean. netcoredbg is fetched fresh (linux)
 # during publish, so don't ship the local (Windows) cache or build artifacts.
+# The Dockerfile copies only global.json, nuget.config, the props files, src/ and
+# tools/; everything else is excluded from the context.
 **/bin/
 **/obj/
 tools/netcoredbg/
-spike/linux/.netcoredbg/
-spike/linux/.server/
+spike/
+tests/
+samples/
+docs/
+scripts/
+deploy/
 coverage-report/
 **/TestResults/
+dist/
 .git/
 .vs/
 .github/

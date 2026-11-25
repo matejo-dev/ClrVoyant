@@ -28,19 +28,19 @@ public sealed class OptimizedBuildTests
             string dll = Path.Combine(outDir, "SampleApp.dll");
             Assert.True(File.Exists(Path.ChangeExtension(dll, ".pdb")), "optimized build must still ship a PDB");
 
-            await DebugTools.DebugLaunch(mgr, dll);
+            await LifecycleTools.DebugLaunch(mgr, dll);
             // Source breakpoint resolved by content (so it tracks the marker line).
-            var bp = await DebugTools.SetBreakpoint(mgr, TestPaths.SampleAppSrc, content: "int offset = squared + 7;");
+            var bp = await BreakpointTools.SetBreakpoint(mgr, TestPaths.SampleAppSrc, content: "int offset = squared + 7;");
             Assert.True(bp.Verified, "line breakpoint must bind on the optimized build");
 
-            var stop = await DebugTools.Continue(mgr, null, 20000);
+            var stop = await ExecutionTools.Continue(mgr, null, 20000);
             Assert.Equal(SessionState.Stopped, stop.State);
             Assert.Equal(bp.Line, stop.Stop!.Line);
 
             // Locals survive optimization here (they are all used): names + values readable.
-            var frames = await DebugTools.GetCallstack(mgr, null, 0, 1);
-            var scopes = await DebugTools.GetScopes(mgr, frames[0].Id);
-            var locals = await DebugTools.GetVariables(mgr, scopes[0].VariablesReference);
+            var frames = await InspectionTools.GetCallstack(mgr, null, 0, 1);
+            var scopes = await InspectionTools.GetScopes(mgr, frames[0].Id);
+            var locals = (await InspectionTools.GetVariables(mgr, scopes[0].VariablesReference)).Items;
             Assert.Contains(locals, v => v.Name == "n");
             Assert.Contains(locals, v => v.Name == "squared");
         }
@@ -56,7 +56,7 @@ public sealed class OptimizedBuildTests
     {
         // -p:Optimize=true overrides the sample's <Optimize>false>; keep a portable PDB.
         var psi = new ProcessStartInfo("dotnet",
-            $"build \"{csproj}\" -c Release -p:Optimize=true -p:DebugType=portable -p:DebugSymbols=true -o \"{outDir}\" --nologo")
+            $"build \"{csproj}\" -c Release -f {TestPaths.DefaultTfm} -p:Optimize=true -p:DebugType=portable -p:DebugSymbols=true -o \"{outDir}\" --nologo")
         {
             RedirectStandardOutput = true,
             RedirectStandardError = true,

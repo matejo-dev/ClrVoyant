@@ -1,7 +1,15 @@
 # End-to-end smoke for debug_test: one-step "run + suspend + attach" of a unit test.
+# -ServerPath: apphost or ClrVoyant.Server.dll (default: the built output for
+# -Configuration / -Framework under src/ClrVoyant.Server/bin).
+param(
+    [string]$ServerPath,
+    [string]$Configuration = 'Debug',
+    [string]$Framework = 'net10.0'
+)
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
-$exe = Join-Path $root "src/ClrVoyant.Server/bin/Debug/net8.0/ClrVoyant.Server.exe"
+. (Join-Path $PSScriptRoot "smoke-common.ps1")
+$exe = Resolve-ServerPath -ServerPath $ServerPath -Configuration $Configuration -Framework $Framework
 $proj = Join-Path $root "tests/ClrVoyant.Tests"
 $bpFile = Join-Path $root "src/ClrVoyant.Core/BreakpointLocator.cs"
 $env:CLRVOYANT_NETCOREDBG = $null

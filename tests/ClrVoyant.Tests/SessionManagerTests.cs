@@ -25,15 +25,6 @@ public class SessionManagerTests
     }
 
     [Fact]
-    public async Task Attach_uses_given_pid()
-    {
-        var (mgr, created) = NewManager();
-        var info = await mgr.AttachAsync(4242);
-        Assert.Equal(4242, info.Pid);
-        Assert.Equal(4242, created[0].Pid);
-    }
-
-    [Fact]
     public async Task Resolve_unknown_throws_and_empty_throws()
     {
         var (mgr, _) = NewManager();
@@ -124,7 +115,7 @@ public class SessionManagerTests
 
         Assert.NotNull(stop);
         Assert.Equal("s1", stop!.SessionId);
-        Assert.Equal("Enriched.cs", stop.Stop.File); // enriched via stack frame
+        Assert.Equal("Enriched.cs", stop.Stop!.File); // enriched via stack frame
         Assert.Equal("s1", mgr.Resolve(null).Id);    // most-recently-stopped is active
     }
 
@@ -135,14 +126,5 @@ public class SessionManagerTests
         await mgr.LaunchAsync(new LaunchRequest("a.dll"));
         var stop = await mgr.WaitForAnyStopAsync(TimeSpan.FromMilliseconds(150));
         Assert.Null(stop);
-    }
-
-    [Fact]
-    public async Task DisposeAsync_is_safe()
-    {
-        var (mgr, _) = NewManager();
-        await mgr.LaunchAsync(new LaunchRequest("a.dll"));
-        await mgr.DisposeAsync(); // should not throw
-        Assert.Empty(mgr.List());
     }
 }

@@ -60,3 +60,26 @@ debug loop through the installed tool with `CLRVOYANT_NO_FETCH=1` to prove it.
   proves too weak).
 - **Require netcoredbg on PATH** — fragile onboarding; defeats "self-contained".
   Rejected (still allowed via the env override).
+
+## Update (2026-11-25)
+
+- **Lazy resolution.** `NetcoredbgLocator` runs on the **first session start**, not at
+  server start. The server comes up and answers `initialize` / `tools/list` even where
+  the engine is missing, and a first-run download never happens inside the client's
+  handshake window. A failure is the error of the first `debug_launch` /
+  `debug_attach` / `debug_test`; only a success is remembered, so the next session
+  start looks again.
+- **`CLRVOYANT_NETCOREDBG` is strict.** When set, the file must exist; otherwise
+  resolution fails with a message. It never falls through to another source.
+- **The runtime download cache is trusted only with its stamp.** The cache directory
+  (`<CLRVOYANT_CACHE_DIR or ~/.clrvoyant>/netcoredbg/<version>`) counts as complete only
+  if it holds both the engine and `netcoredbg-<version>.stamp`, written last. A cache
+  populated by hand, or by an older release that did not write the stamp, is
+  **incomplete: it is refetched once, and under `CLRVOYANT_NO_FETCH` resolution fails**
+  (the message names the files the cache must hold). This is deliberate (an interrupted
+  extraction must never be trusted) but it is a behaviour change for air-gapped users
+  with a hand-filled cache.
+- **Known gap: a crashed fetch can leave a work directory behind.** The fetch extracts
+  into a sibling `<version>.<guid>.tmp` directory and renames it into place. A normal
+  failure deletes it; if the process is killed mid-fetch it stays, and nothing sweeps
+  such directories. It is harmless to correctness (it is never trusted) but uses disk.

@@ -6,9 +6,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
 
-    <!-- Fail the build on any warning, so warnings can't quietly accumulate. CI
-         pins the SDK (setup-dotnet 8.0.x), so the analyzer set is stable there;
-         an SDK bump that surfaces new warnings is a deliberate, fixable event. -->
+    <!-- Fail the build on any warning, so warnings can't quietly accumulate. The SDK
+         band is pinned by global.json, so the analyzer set is stable; an SDK bump
+         that surfaces new warnings is a deliberate, fixable event. -->
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
 
     <!-- Authorship / packaging metadata (applies if a project opts into packing).
@@ -21,6 +21,17 @@
     <RepositoryUrl>https://github.com/matejo-dev/ClrVoyant.git</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <IsPackable>false</IsPackable>
+
+    <!-- Reproducible, source-linked packages for nuget.org. -->
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <!-- Report vulnerable packages including transitive ones (default is direct only). -->
+    <NuGetAuditMode>all</NuGetAuditMode>
+  </PropertyGroup>
+
+  <!-- Deterministic paths in the PDBs/package only on CI (it breaks local debugging). -->
+  <PropertyGroup Condition="'$(GITHUB_ACTIONS)' == 'true'">
+    <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
   </PropertyGroup>
 
   <!-- netcoredbg is fetched at build time (pinned + SHA-256 verified) by the

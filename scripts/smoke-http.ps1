@@ -1,19 +1,30 @@
 # Smoke for the HTTP transport + bearer auth. Verifies: (1) it fails closed with
 # no token, (2) rejects requests without/with a wrong bearer (401), (3) completes
 # an MCP initialize handshake with the right bearer.
+# -ServerPath: apphost or ClrVoyant.Server.dll (default: the built output for
+# -Configuration / -Framework). -Port 0 picks a free port.
+param(
+    [string]$ServerPath,
+    [int]$Port = 3017,
+    [string]$Configuration = 'Debug',
+    [string]$Framework = 'net10.0'
+)
 $ErrorActionPreference = "Stop"
-$root = Split-Path -Parent $PSScriptRoot
-$exe = Join-Path $root "src/ClrVoyant.Server/bin/Debug/net8.0/ClrVoyant.Server.exe"
-$port = 3017
-$url = "http://127.0.0.1:$port"
+. (Join-Path $PSScriptRoot "smoke-common.ps1")
+$exe = Resolve-ServerPath -ServerPath $ServerPath -Configuration $Configuration -Framework $Framework
+if ($Port -eq 0) {
+    $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+    $listener.Start()
+    $Port = $listener.LocalEndpoint.Port
+    $listener.Stop()
+}
+$url = "http://127.0.0.1:$Port"
 $token = "test-secret-token"
 
 function Start-Server($env) {
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = $exe
+    $psi = New-ServerStartInfo $exe
     $psi.RedirectStandardError = $true
     $psi.RedirectStandardOutput = $true
-    $psi.UseShellExecute = $false
     foreach ($k in $env.Keys) { $psi.Environment[$k] = $env[$k] }
     return [System.Diagnostics.Process]::Start($psi)
 }

@@ -47,3 +47,22 @@ stdio remains the default and is unauthenticated by design (local, parent-spawne
   policy is the pragmatic floor. mTLS is recommended *in addition* at the ingress,
   documented in `docs/security.md`, not enforced in-process.
 - **OAuth / full identity** — overkill for a break-glass tool. Deferred.
+
+## Update (2026-11-25)
+
+- **Loopback by default.** The default of `CLRVOYANT_HTTP_URL` is now
+  `http://127.0.0.1:3001`, not `0.0.0.0`. Reaching the server from the network is a
+  decision the operator makes; the container image makes it explicitly (it sets
+  `0.0.0.0` for its pod), and the server logs a warning at startup for every
+  non-loopback address it listens on.
+- **Stateless HTTP, set explicitly.** The MCP SDK 2.x flipped its default; the mode is
+  now set in code. Debug sessions live in the process-wide `SessionManager`, addressed
+  by the tools' own `sessionId`, and no tool pushes to the client, so MCP session state
+  would buy nothing and cost a forced re-initialize after an idle timeout or restart.
+  Revisit only if a feature needs unsolicited server push (for example "stopped"
+  events).
+- **Bearer check.** It is a middleware of its own; the scheme is matched
+  case-insensitively (RFC 7235); the token comparison remains constant-time.
+- **Authentication is audited.** A request refused with `401` is logged as
+  `auth -> denied remote=<address>`, and over HTTP every `tools/call` audit line carries
+  `remote=<address>`. What the caller presented is never logged.

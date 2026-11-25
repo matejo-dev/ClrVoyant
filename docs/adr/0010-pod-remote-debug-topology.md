@@ -47,3 +47,22 @@ all supported RIDs under `tools/netcoredbg/<rid>/`; the image uses its own arch)
 - **Ephemeral debug container** (`kubectl debug`) — attractive (no standing
   sidecar) but the process/PID-namespace and capability story is the same; a future
   variant, not the initial decision.
+
+## Update (2026-11-25)
+
+The topology is unchanged. The artefacts changed:
+
+- `deploy/Dockerfile` builds on the .NET 10 SDK and ASP.NET Core 10 images and sets
+  `CLRVOYANT_HTTP_URL=http://0.0.0.0:3001` explicitly (the server's own default is
+  loopback, see [0009](0009-http-transport-mandatory-auth.md)).
+- `deploy/clrvoyant-sidecar.yaml` no longer contains a placeholder token `Secret`: the
+  Secret is created with `kubectl create secret`, so applying the manifest cannot
+  deploy a known token. The image is pinned to an explicit version (`X.Y.Z` to be
+  replaced; never `:latest`).
+- The sidecar's `securityContext` enables `allowPrivilegeEscalation: false`, the
+  `RuntimeDefault` seccomp profile and adds only `SYS_PTRACE`; it sets resource requests
+  and a memory limit (starting points, not measurements).
+- Running as non-root, dropping all capabilities and a read-only root file system are
+  present only as a **commented, untested** block: for a non-root user the added
+  capability is not in the effective set, so ptrace of a process owned by another uid is
+  expected to fail. It has not been validated against a real attach.

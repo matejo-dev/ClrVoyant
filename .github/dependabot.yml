@@ -1,0 +1,34 @@
+version: 2
+updates:
+  # Workflow actions are pinned by commit SHA; Dependabot rewrites the SHA and the
+  # trailing "# vX.Y.Z" comment together.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        update-types: [minor, patch]
+
+  # Central package management: versions live in Directory.Packages.props at the root.
+  - package-ecosystem: nuget
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      nuget-minor-patch:
+        update-types: [minor, patch]
+    ignore:
+      # ClrMD 4.x was evaluated and declined (it ships Azure/MSAL client libraries this
+      # tool does not use); see the note next to its version in Directory.Packages.props.
+      - dependency-name: Microsoft.Diagnostics.Runtime
+        update-types: [version-update:semver-major]
+
+  # Base images in deploy/Dockerfile.
+  - package-ecosystem: docker
+    directory: /deploy
+    schedule:
+      interval: weekly
+    groups:
+      docker-minor-patch:
+        update-types: [minor, patch]
