@@ -32,8 +32,9 @@
          walks through managed-but-not-IL frames (Samsung/netcoredbg#215, GitHub issue
          #1). Linux stays on 3.1.3-1062 because the 3.2.0-1092 Linux builds require
          glibc 2.38 / GLIBCXX_3.4.32 (3.1.3-1062: glibc 2.34 / GLIBCXX_3.4.30), so they
-         do not start on Debian 12 (the aspnet:8.0 image of deploy/Dockerfile), Ubuntu
-         22.04 or RHEL 9. Move Linux forward only to a release that keeps that baseline. -->
+         do not start on Debian 12 (the aspnet:8.0 image of deploy/Dockerfile) or Ubuntu
+         22.04, where 3.1.3-1062 does. Move Linux forward only to a release that keeps
+         that baseline. -->
     <NetcoredbgVersionWindows>3.2.0-1092</NetcoredbgVersionWindows>
     <NetcoredbgVersionLinux>3.1.3-1062</NetcoredbgVersionLinux>
     <!-- Per-OS/arch pinned SHA-256 of the upstream asset of the version above. Supported

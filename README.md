@@ -254,7 +254,7 @@ Fuller breakdown with sources: [docs/comparison.md](docs/comparison.md).
 - Targets must be **.NET 8+** (netcoredbg does not debug .NET Framework).
 - **The bundled netcoredbg differs by OS**: 3.2.0-1092 on Windows, 3.1.3-1062 on
   Linux (the 3.2.0 Linux builds need glibc 2.38, so they do not run on Debian 12 /
-  Ubuntu 22.04 / RHEL 9). 3.1.3 fails a whole `get_callstack` when a frame on the
+  Ubuntu 22.04, where 3.1.3 does). 3.1.3 fails a whole `get_callstack` when a frame on the
   stack is managed but not IL — seen with WinForms on .NET 10, not observed on Linux
   so far. If you hit it on a glibc 2.38+ host, point `CLRVOYANT_NETCOREDBG` at a
   3.2.0+ netcoredbg.
