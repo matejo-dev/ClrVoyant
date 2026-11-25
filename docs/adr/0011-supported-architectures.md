@@ -67,3 +67,13 @@ Support three host/target architectures, each tool instance matching its target:
 - **Support `win-arm64` / macOS.** No netcoredbg build we rely on; low demand for a
   .NET *server* debugger. Deferred until upstream + demand exist. (Upstream added
   `osx-arm64` in 3.2.0; `win-arm64` is still missing.)
+
+## Update (2026-11-25)
+
+The `ubuntu-24.04-arm` CI leg runs on real arm64 hardware, in the same matrix as the
+x64 Linux and Windows legs and with the same steps: the full unit and integration
+suite, and the installed-tool packaging test against the bundled `linux-arm64` engine.
+The "wired up, pending hardware validation" wording above no longer applies:
+`linux-arm64` is validated by CI on every push to `main` and every pull request, and
+the release workflow runs the suite on x64 Linux before publishing. The QEMU spike
+remains non-authoritative.

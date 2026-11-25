@@ -132,6 +132,13 @@ public sealed partial class TestDebugLauncher
                     Describe(output));
             }
 
+            // NOTE: this is the first point where the debugger engine is needed. The engine is
+            // resolved lazily on the first session start (see HostFactory.AddDebugServices), so a
+            // missing or unfetchable netcoredbg surfaces only HERE, after `dotnet test` has already
+            // built the project and started the suspended test host. The caller then pays for a full
+            // build before learning the debugger cannot start, and the `finally` below has to kill
+            // that tree. Checking the engine before starting `dotnet test` would fail fast, but
+            // needs a way to resolve the engine without creating a session.
             var info = await _sessions.AttachAsync(await pidTcs.Task, ct);
             // Tie the driver process to the session so debug_stop cleans it up.
             _sessions.Resolve(info.SessionId).OwnedResource = owned;

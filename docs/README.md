@@ -11,20 +11,23 @@ the deeper reference.
 
 | Document | What it covers |
 |---|---|
-| [architecture.md](architecture.md) | The system as built: projects, the two-engine design, wait-based model, cross-OS heap read, transports. |
-| [tools.md](tools.md) | Complete reference of the 34 MCP tools, grouped, with parameters and semantics. |
-| [comparison.md](comparison.md) | Honest "what you get / what you give up" vs other MCP debuggers. |
+| [architecture.md](architecture.md) | The system as built: projects, the two-engine design, the request pipeline, wait-based model, session ownership, lazy engine resolution, transports. |
+| [tools.md](tools.md) | Complete reference of the 35 MCP tools, grouped, with parameters, result shapes, errors and paging. |
+| [comparison.md](comparison.md) | What you get / what you give up versus other MCP debuggers, including the .NET-specific ones; dated, with sources. |
 | [remote-debugging-pod.md](remote-debugging-pod.md) | How Docker/Kubernetes debugging works (the two-link model, sidecar, end-to-end flow). |
-| [security.md](security.md) | Threat model and controls — required reading before exposing HTTP. |
-| [testing.md](testing.md) | Unit / integration / smoke layers and the de-risking spikes. |
-| [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) | The original phased plan (historical; architecture.md is the current state). |
+| [security.md](security.md) | Threat model, controls and release verification: required reading before exposing HTTP. |
+| [testing.md](testing.md) | The test layers, how to run the fast subset, what CI runs, coverage. |
+| [archive/IMPLEMENTATION_PLAN.md](archive/IMPLEMENTATION_PLAN.md) | The pre-implementation plan. Superseded, kept for history; not a reference. |
 | [adr/](adr/README.md) | Architecture Decision Records — the significant decisions and their trade-offs. |
 
 ## Related, outside `docs/`
 
 - [`deploy/`](../deploy/README.md) — operational quickstart for the POD sidecar
   (Dockerfile, manifest, commands).
-- [`spike/`](../spike) — the reproducible de-risking proofs (Windows + `spike/linux`).
+- [`spike/`](../spike/README.md) — historical de-risking experiments cited by the ADRs
+  (not built, not maintained).
+- [`CHANGELOG.md`](../CHANGELOG.md) and [`SECURITY.md`](../SECURITY.md) — release notes
+  and how to report a vulnerability.
 - [`scripts/`](../scripts) — the MCP driver and end-to-end smokes.
 
 ## Reading paths

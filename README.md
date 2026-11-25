@@ -1,105 +1,103 @@
 # ClrVoyant
 
 [![CI](https://github.com/matejo-dev/ClrVoyant/actions/workflows/ci.yml/badge.svg)](https://github.com/matejo-dev/ClrVoyant/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-![.NET 8/9/10](https://img.shields.io/badge/.NET-8%20%7C%209%20%7C%2010-512BD4)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/matejo-dev/ClrVoyant/blob/main/LICENSE)
+![Debug targets: .NET 8/9/10](https://img.shields.io/badge/debug%20targets-.NET%208%20%7C%209%20%7C%2010-512BD4)
 
 A local **MCP server that lets an agent (e.g. Claude) debug .NET applications**:
-launch a program, set breakpoints, step, inspect variables / call stacks /
-threads, and enumerate all in-flight async `Task`s — everything a developer looks
-at while debugging — deterministically, headless, with no IDE.
+launch a program, set breakpoints, step, inspect variables / call stacks / threads, and
+enumerate all in-flight async `Task`s, headless, with no IDE. You run it locally and
+point your agent at it, then ask in natural language:
 
-Style is the same as the Azure DevOps / Azure MCP servers: run it locally, point
-your agent at it, and ask in natural language:
+> "Launch project X. It hangs instead of completing. Set breakpoints, step through,
+> read the variables and the in-flight async tasks, and tell me why."
 
-> "Launch project X — it hangs instead of completing. Set breakpoints, step
-> through, read the variables and the in-flight async tasks, and tell me why."
+The agent decides *where* to break and *what* to inspect (it reads your source with its
+own tools); ClrVoyant gives it the debugger primitives.
 
-The agent decides *where* to break and *what* to inspect (it reads your source
-with its own tools); ClrVoyant gives it the deterministic debugger primitives.
+> Links in this file are absolute because it is also the package readme on nuget.org,
+> where repository-relative links do not resolve.
 
-## How it works
+## Quickstart
 
-A single .NET process orchestrates **two engines** behind one IDE-neutral tool
-contract:
+**1. Install** (needs the [.NET 10 SDK](https://dotnet.microsoft.com/download), which
+includes the runtimes the tool runs on):
 
-- **[netcoredbg](https://github.com/Samsung/netcoredbg)** (bundled, MIT) over the
-  **Debug Adapter Protocol** — control + live introspection (breakpoints, step,
-  threads, call stack, variables, evaluate).
-- **[ClrMD](https://github.com/microsoft/clrmd)** — reads the heap at a stop to
-  enumerate all `Task`s and reconstruct the async await/continuation graph (the
-  "Tasks window" equivalent, which DAP cannot provide). On Windows via a PSS
-  snapshot; on Linux via a passive read of the (netcoredbg-held) process — both
-  validated to coexist with netcoredbg holding the process.
-
-See [docs/architecture.md](docs/architecture.md) for the design as built, and
-[docs/](docs/README.md) for the full documentation (tool reference, POD/remote
-debugging, security model, ADRs).
-
-## What you can do with it
-
-Concrete scenarios it delivers today (Windows or Linux, .NET 8/9/10):
-
-- **Debug an app you launch** — start a program, break, step, read
-  variables / call stack / threads. The base loop. ([tools](docs/tools.md))
-- **Attach to a running process** — discover the PID (`list_processes`, filters
-  to .NET) and attach; for long-running or externally-started processes.
-- **Debug a unit test in one step** — `debug_test(project[, testName])` launches
-  the test host suspended, attaches, and breaks in your test/production code.
-- **Understand stuck `async` code** — enumerate every in-flight `Task` with its
-  state and the await/continuation graph (`list_tasks`, `get_async_graph`). This
-  is the "Tasks window" that DAP-only debuggers structurally can't provide.
-- **Debug several processes at once** — multi-session, with `wait_for_any_stop`
-  to orchestrate stops that arrive asynchronously; optional child-process
-  auto-attach for parents that spawn workers.
-- **Debug without source** — only have a deployed build's DLLs + PDBs, not the
-  `.cs`? `list_methods` reads the assembly metadata to find method names, then
-  `set_function_breakpoint("Namespace.Type.Method")` binds straight from the PDB —
-  no source file needed. Attach/call stack/variables/Tasks all work the same.
-- **Debug inside a container / Kubernetes POD** — run it as an authenticated
-  HTTP sidecar co-located with the target (PDBs required); only the agent is
-  remote, the engine stays local to the process.
-  ([remote debugging](docs/remote-debugging-pod.md))
-
-## Requirements
-
-- **Supported architectures**: `win-x64`, `linux-x64`, `linux-arm64`. The engine
-  debugs locally, so **the tool runs at the same architecture as the target** — an
-  arm64 tool for an arm64 process. (No `win-arm64`: netcoredbg ships no such
-  build. No macOS: not validated.) Each architecture is exercised by its own CI leg, including an
-  `arm64` runner on real hardware — see [ADR-0011](docs/adr/0011-supported-architectures.md).
-- **.NET SDK 8 / 9 / 10** (the target apps you debug must be .NET 8+; .NET
-  Framework is not supported)
-
-## Install
-
-The cleanest way is as a **.NET global tool** — you get a `clrvoyant` command on
-your PATH, so client config never points at a build folder. The published package
-**bundles netcoredbg for every supported RID** (pinned + SHA-256 verified at build
-time) and the tool picks the one matching your host, so it installs and runs
-**offline** with no runtime download — only a missing-bundle fallback fetches.
-
-```pwsh
-# From a published package (once it's on NuGet):
+```sh
 dotnet tool install -g ClrVoyant
-
-# Or from source right now:
-dotnet pack src/ClrVoyant.Server -c Release -o ./nupkg
-dotnet tool install -g ClrVoyant --add-source ./nupkg
 ```
 
-Then point your MCP client at the command (`.mcp.json` / Claude config; VS Code's
-`mcp.json` uses the key `servers`):
+The tool bundles the debug engine for every supported platform, so it installs and runs
+offline. It installs the command `clrvoyant` into the .NET tools folder
+(`~/.dotnet/tools` or `%USERPROFILE%\.dotnet\tools`), which is normally on your `PATH`;
+open a new terminal if the command is not found. `clrvoyant` is an MCP server, not an
+interactive command: your client starts it.
+
+**2. Register it in your MCP client.** Claude Code:
+
+```sh
+claude mcp add --transport stdio --scope user clrvoyant -- clrvoyant
+```
+
+or put this in a project's `.mcp.json` (Claude Code) or in Claude Desktop's
+`claude_desktop_config.json`:
 
 ```json
-{
-  "mcpServers": {
-    "clrvoyant": { "command": "clrvoyant" }
-  }
-}
+{ "mcpServers": { "clrvoyant": { "command": "clrvoyant" } } }
 ```
 
-The install scripts do build + register in one step:
+Cursor (`.cursor/mcp.json`) documents `type` for stdio servers:
+
+```json
+{ "mcpServers": { "clrvoyant": { "type": "stdio", "command": "clrvoyant" } } }
+```
+
+VS Code uses `.vscode/mcp.json` with the key `servers`:
+
+```json
+{ "servers": { "clrvoyant": { "type": "stdio", "command": "clrvoyant" } } }
+```
+
+Where these formats come from, as read from each client's documentation on 2026-11-25:
+Claude Code (`claude mcp add ... -- <command>`, `.mcp.json` with `mcpServers`; an entry
+without `type` is stdio), VS Code (`.vscode/mcp.json`, top-level `servers`, `"type":
+"stdio"`; "MCP: Add Server" in the Command Palette), Cursor (`.cursor/mcp.json` or
+`~/.cursor/mcp.json`, `mcpServers`; `command` must be on `PATH` or a full path), Claude
+Desktop (Settings, Developer, Edit Config; `%APPDATA%\Claude\claude_desktop_config.json`
+on Windows, `~/Library/Application Support/Claude/claude_desktop_config.json` on macOS;
+restart the app). Not verified: Windsurf (the install script below can write its
+config), and whether a GUI client that does not inherit your shell's `PATH` finds
+`clrvoyant`.
+
+**3. Check it is connected.** In Claude Code run `claude mcp list` (it should say
+`Connected`) or `/mcp` in a session. In other clients, look for `clrvoyant` and its
+tools in the MCP/tools list; asking the agent to call `get_debug_instructions` is a
+cheap end-to-end test.
+
+**4. First prompt.** Build something with a PDB (`dotnet build -c Debug`) and ask:
+
+> "Launch `<path>/MyApp/bin/Debug/net10.0/MyApp.dll` under the debugger. Put a
+> breakpoint on the line `var total = items.Sum(x => x.Price);` in `Program.cs`, run to
+> it, and show me the local variables."
+
+To try it on the repository's own sample (clone this repository first):
+
+```sh
+dotnet build samples/SampleApp -c Debug -f net10.0
+```
+
+> "Launch `samples/SampleApp/bin/Debug/net10.0/SampleApp.dll` (use full paths). Set a
+> breakpoint on the line `int offset = squared + 7;` in `samples/SampleApp/Program.cs`,
+> continue until it stops, then list the in-flight Tasks and tell me which are stuck."
+
+**If `clrvoyant` is not on `PATH`**: confirm it is installed (`dotnet tool list -g`),
+open a new terminal, or add the .NET tools folder to `PATH`. Failing that, register it
+by the full path of the executable in the .NET tools folder (`clrvoyant.exe` on
+Windows, `clrvoyant` elsewhere) as `"command"`; in JSON, write Windows backslashes
+doubled.
+
+Install scripts that pack this repository, install the tool from the local package and
+write the client entry in one step (the existing config is backed up first):
 
 ```pwsh
 ./scripts/install.ps1 -Client cursor     # claude-code | claude-desktop | cursor | windsurf | vscode
@@ -109,162 +107,174 @@ The install scripts do build + register in one step:
 ./scripts/install.sh --client cursor      # bash equivalent (uses jq to merge)
 ```
 
-Prefer not to install a tool? Build and point at the binary directly:
+## How it works
 
-```pwsh
-dotnet build ClrVoyant.slnx -c Release     # bundles netcoredbg next to the server
-```
+A single .NET process orchestrates **two engines** behind one IDE-neutral tool contract:
 
-and set `"command"` to the built `ClrVoyant.Server` executable. To use your own
-netcoredbg, set `CLRVOYANT_NETCOREDBG`; to forbid the first-run download (air-gapped),
-set `CLRVOYANT_NO_FETCH=1` and pre-provide the engine.
+- **[netcoredbg](https://github.com/Samsung/netcoredbg)** (bundled, MIT) over the
+  **Debug Adapter Protocol**: control and live introspection (breakpoints, step,
+  threads, call stack, variables, evaluate).
+- **[ClrMD](https://github.com/microsoft/clrmd)**: reads the heap at a stop to
+  enumerate all `Task`s and reconstruct the async await/continuation graph (the "Tasks
+  window" equivalent, which DAP cannot provide). On Windows via a process snapshot; on
+  Linux via a passive read of the process while netcoredbg holds it.
 
-For debugging a .NET app in **Kubernetes**, run ClrVoyant as a sidecar over HTTP —
-see [deploy/](deploy/README.md) and [docs/remote-debugging-pod.md](docs/remote-debugging-pod.md).
+See [docs/architecture.md](https://github.com/matejo-dev/ClrVoyant/blob/main/docs/architecture.md)
+for the design and the [documentation index](https://github.com/matejo-dev/ClrVoyant/blob/main/docs/README.md)
+for the rest.
 
-Tip: have the agent call `get_debug_instructions` first — it returns a short
-playbook of the tools and their ordering.
+## What you can do with it
+
+- **Debug an app you launch**: break, step, read variables, call stack, threads; pass
+  environment variables with `env`.
+- **Attach to a running process**: `list_processes` (filters to .NET, shows command
+  lines) then `debug_attach`.
+- **Debug a unit test in one step**: `debug_test(project[, testName])` runs the test
+  host suspended, attaches, and breaks in your test or production code.
+- **Understand stuck `async` code**: every in-flight `Task` with its state, and the
+  await/continuation graph (`list_tasks`, `get_async_graph`).
+- **Debug several processes at once**: multi-session, `wait_for_any_stop` to learn which
+  one stopped, exited or lost its debugger; optional child-process auto-attach.
+- **Debug without source**: with only a build's DLLs and PDBs, `list_methods` finds method
+  names and `set_function_breakpoint("Namespace.Type.Method")` binds from the PDB.
+- **Debug inside a container or Kubernetes pod**: run it as an authenticated HTTP
+  sidecar next to the target (PDBs required); only the agent is remote.
+  ([remote debugging](https://github.com/matejo-dev/ClrVoyant/blob/main/docs/remote-debugging-pod.md))
+
+## Requirements
+
+- **To run the tool:** the **.NET 10 runtime including ASP.NET Core** (the HTTP transport
+  uses it), or a newer runtime through roll-forward; the .NET 10 SDK has both. Installing
+  with an older SDK has not been tried.
+- **Debug targets:** .NET **8, 9 and 10** (the runtime of the target must be installed,
+  as for running the app at all). .NET 8 and 9 left Microsoft support on 2026-11-10 but
+  remain supported as targets. .NET 11 is not validated. .NET Framework is not supported.
+- **Platforms:** `win-x64`, `linux-x64`, `linux-arm64`. The engine debugs locally, so the
+  tool runs at the same architecture as its target. No `win-arm64` (netcoredbg ships no
+  such build) and no macOS (not validated). Each architecture has its own CI leg, the
+  arm64 one on real hardware
+  ([ADR-0011](https://github.com/matejo-dev/ClrVoyant/blob/main/docs/adr/0011-supported-architectures.md)).
+- A **PDB** next to each assembly you want breakpoints and locals in (see
+  [limitations](#known-limitations)).
+
+## Configuration
+
+All environment variables the server reads. Set them in the client's server entry
+(`env`, or `claude mcp add --env NAME=value`) or in the container.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `CLRVOYANT_TRANSPORT` | `stdio` | `http` selects the Streamable-HTTP transport; any other value (or unset) is stdio. |
+| `CLRVOYANT_AUTH_TOKEN` | none | Bearer token for HTTP. **Required for HTTP**: the server refuses to start without it. Ignored on stdio. |
+| `CLRVOYANT_HTTP_URL` | `http://127.0.0.1:3001` | Where HTTP listens. The default is loopback only; the container image sets `http://0.0.0.0:3001`. A warning is logged for any non-loopback address. |
+| `CLRVOYANT_NETCOREDBG` | unset | Full path to a netcoredbg executable to use instead of the bundled one. If set, the file must exist, or starting a session fails (no fallback). |
+| `CLRVOYANT_NO_FETCH` | unset | Anything but empty, `0` or `false` forbids the first-run download of netcoredbg (air-gapped use); only a complete cache or `CLRVOYANT_NETCOREDBG` then works. |
+| `CLRVOYANT_CACHE_DIR` | `~/.clrvoyant` | Root of the download cache (`<dir>/netcoredbg/<version>`), used only when no bundled engine is found. A cache counts as complete only with its `netcoredbg-<version>.stamp` file next to the engine. |
+| `CLRVOYANT_PACKAGING_TESTS` | unset | Test suite only: `1` enables the installed-tool packaging tests. |
+| `CLRVOYANT_REQUIRE_TARGET_RUNTIMES` | unset | Test suite only: `1` makes a missing .NET 8/9/10 runtime a test failure instead of a skip. |
+
+The engine is located when the **first session starts**, not at server start; a
+problem shows up as the error of the first `debug_launch` / `debug_attach` /
+`debug_test`.
 
 ## Transports
 
-- **stdio** (default) — the agent spawns the server locally; one client per process.
-- **HTTP** — set `CLRVOYANT_TRANSPORT=http` for a Streamable-HTTP server a remote
-  agent can reach (e.g. shipped inside a POD next to the app). HTTP **requires**
-  `CLRVOYANT_AUTH_TOKEN` (a bearer token) and binds `CLRVOYANT_HTTP_URL`
-  (default `http://0.0.0.0:3001`); it **fails closed** without a token, because a
-  debug server that can launch processes and `evaluate` code is an RCE surface.
-
-For debugging a .NET app running in **Kubernetes**, run ClrVoyant as a sidecar:
-see [deploy/](deploy/) (Dockerfile + sidecar manifest + the security model).
+- **stdio** (default): the agent spawns the server locally; one client per process.
+  Unauthenticated by design: the boundary is the OS process boundary.
+- **HTTP**: `CLRVOYANT_TRANSPORT=http` and a `CLRVOYANT_AUTH_TOKEN`. It **fails closed**
+  without a token and **listens on loopback by default**. Every request needs
+  `Authorization: Bearer <token>` (the scheme is case-insensitive), is otherwise
+  answered `401`, and refusals are audited with the remote address. It is stateless and
+  plain HTTP: keep it inside a trusted network (`kubectl port-forward`) or put TLS in
+  front. A debug server that can launch processes and `evaluate` code is a
+  remote-code-execution surface: read
+  [docs/security.md](https://github.com/matejo-dev/ClrVoyant/blob/main/docs/security.md)
+  before exposing it. For Kubernetes see
+  [deploy/](https://github.com/matejo-dev/ClrVoyant/blob/main/deploy/README.md).
 
 ## Tools
 
-**Onboarding**
-- `get_debug_instructions()` — a short playbook (typical loop, tool ordering,
-  gotchas); call it first
+35 tools; the full reference (parameters, defaults, result shapes, errors, paging) is
+[docs/tools.md](https://github.com/matejo-dev/ClrVoyant/blob/main/docs/tools.md). Have
+the agent call `get_debug_instructions` first (the same playbook is also sent as the MCP
+server instructions).
 
-**Sessions** (multi-session: every tool takes an optional `sessionId`; omit for
-the active one)
-- `debug_launch(program, args?, cwd?, stopAtEntry?)` — launch a built `.dll`
-- `debug_attach(pid)` — attach to a running process (e.g. a child process)
-- `list_processes(dotnetOnly?)` — list processes (pid, parent, name, isDotNet) to
-  find a target to attach (e.g. the app process in a shared-PID-namespace POD)
-- `debug_test(testProject, testName?, configuration?)` — run `dotnet test` with the
-  host suspended and attach in one step (the `VSTEST_HOST_DEBUG` recipe, automated)
-- `restart_debugging(sessionId?)` — relaunch a launched session in place: same
-  id, same args, breakpoints preserved (not valid for attached sessions)
-- `set_auto_attach(enabled)` — auto-attach .NET **child** processes of debugged
-  processes (off by default; matched by parent PID, no suspend-at-startup)
-- `debug_stop(sessionId?)`, `debug_status(sessionId?)`, `list_sessions()`
-- `wait_for_any_stop(timeoutMs?)` — block until *any* session breaks (key for
-  several processes running asynchronously)
+- **Onboarding:** `get_debug_instructions`
+- **Sessions:** `debug_launch`, `debug_attach`, `debug_test`, `restart_debugging`,
+  `debug_stop`, `debug_status`, `list_sessions`, `list_processes`, `get_output`,
+  `set_auto_attach`
+- **Breakpoints:** `set_breakpoint`, `set_function_breakpoint`, `list_breakpoints`,
+  `list_function_breakpoints`, `remove_breakpoint`, `clear_all_breakpoints`,
+  `set_exception_breakpoints`, `list_methods`
+- **Execution** (wait-based: they block until the next stop, exit or timeout):
+  `continue`, `step_over`, `step_into`, `step_out`, `pause`, `wait_for_any_stop`
+- **Introspection** (target stopped): `get_threads`, `get_callstack`, `get_scopes`,
+  `get_variables`, `evaluate` (**executes code in the debuggee**), `get_exception_info`
+- **Async / Tasks** (ClrMD, target stopped): `list_tasks`, `get_task`,
+  `get_async_graph`, `get_async_callstack`
 
-**Breakpoints & execution** (wait-based: `continue`/`step_*` block until the next
-stop and return the new location)
-- `set_breakpoint(file, line?, content?, condition?, hitCondition?, logMessage?)` —
-  prefer `content` (the source text of the line) over a raw `line`: it survives
-  line-number drift; `line` then only disambiguates duplicate matches
-- `set_function_breakpoint(functionName, condition?, hitCondition?)` — break by
-  method name (`Method` / `Type.Method` / `Namespace.Type.Method`), no source line;
-  binds from the PDB, so it's the **no-source** path. `list_function_breakpoints()`
-- `list_methods(assemblyPath, typeFilter?, methodFilter?)` — discover method names
-  in a built `.dll` (static metadata read, no process) to feed `set_function_breakpoint`
-- `remove_breakpoint(bpId)`, `clear_all_breakpoints()`, `list_breakpoints()`,
-  `set_exception_breakpoints(filters)`
-- `continue(threadId?, timeoutMs?)`, `step_over` / `step_into` / `step_out`, `pause()`
-
-**Introspection** (when stopped)
-- `get_threads()`, `get_callstack(threadId?, ...)`
-- `get_scopes(frameId)`, `get_variables(variablesReference)`
-- `evaluate(expression, frameId?, context?)` — ⚠️ **executes code in the
-  debuggee** (side effects); prefer `get_variables` for plain inspection
-- `get_exception_info(threadId?)`
-
-**Async / Tasks** (ClrMD, when stopped)
-- `list_tasks(status?)` — all Tasks with status and async method
-- `get_task(address)`
-- `get_async_graph()` — await/continuation graph
-- `get_async_callstack(address)` — logical async chain from a Task
-
-## Typical agent loop
-
-1. `debug_launch` the app → `set_breakpoint` at the suspect line
-2. `continue` → returns `stopped at File.cs:NN`
-3. `get_callstack` → `get_scopes` → `get_variables` to read state
-4. `list_tasks` / `get_async_graph` to see what async work is pending/stuck
-5. `step_over` / `continue` to narrow it down → diagnose
+Things to know: `debug_stop` kills only processes the server started and detaches from
+ones it attached to (`terminate` overrides); a tool failure comes back as an error result
+with an actionable message; `list_tasks`, `get_async_graph`, `get_variables` and
+`list_methods` return pages (`items`, `total?`, `truncated`, `nextOffset?`).
 
 ## Debugging tests
 
-Tests run in a `testhost` process. Use `debug_test(testProject, testName?)` — it
-runs `dotnet test` with `VSTEST_HOST_DEBUG=1` (so the host suspends and announces
-its PID), parses that PID and attaches in one step; set breakpoints right after it
-returns and execution resumes into them. The `dotnet test` driver is killed when
-you `debug_stop` the session. Build the tests with a PDB — **Debug** is safest for
-full locals (an optimized build with a PDB works too).
+Tests run in a `testhost` process. `debug_test(testProject, testName?)` runs
+`dotnet test` with `VSTEST_HOST_DEBUG=1` (the host suspends and announces its PID),
+attaches in one step, and you set breakpoints right after it returns. It fails at once,
+with the build output, if `dotnet test` ends before a host appears. The `dotnet test`
+process is ended with the session. Build the tests with a PDB (Debug is safest for full
+locals).
 
-Under the hood this automates the manual recipe (kept here for reference):
-`$env:VSTEST_HOST_DEBUG=1; dotnet test <project> -c Debug` prints `Process Id: NNNN`
-and waits; `debug_attach(NNNN)` releases it via `Debugger.IsAttached`.
+## Alternatives and how to choose
 
-## Alternatives & how to choose
+Several MCP debuggers exist, with different trade-offs. This is a summary of what their
+own pages said on **2026-11-25**; "not documented" means the page did not mention it. The
+details, sources and caveats are in
+[docs/comparison.md](https://github.com/matejo-dev/ClrVoyant/blob/main/docs/comparison.md).
 
-There are several MCP debuggers. They make different trade-offs — this is about
-**what you get and what you give up**, not "we're best". Pick by what you debug.
-
-| If you want… | Consider | What you give up |
+| If you want... | Consider | Notes |
 |---|---|---|
-| **Deep .NET** debugging — async/`Task` state, headless, remote/POD | **ClrVoyant** (this) | breadth: it is **.NET 8+ only**, and headless (no visual IDE) |
-| **Many languages** via one DAP server (Python, JS, Go, Rust, Java, .NET…) | [debugmcp/mcp-debugger](https://github.com/debugmcp/mcp-debugger) | no async/`Task`/heap view — DAP can't enumerate Tasks, so .NET async state is invisible |
-| Debugging **inside VS Code** with a human watching | [microsoft/DebugMCP](https://github.com/microsoft/DebugMCP) | requires VS Code running (not truly headless); bounded by the VS Code Debug API; no async Tasks |
-| **Python/Node/Java/browser**, no IDE | [bastiencb/claude-mcp-debugger](https://github.com/bastiencb/claude-mcp-debugger) | no .NET; no async/heap inspection |
+| .NET debugging with the `Task` state of a live, stopped process, headless, in a pod | **ClrVoyant** (this) | .NET 8/9/10 targets only; needs the .NET 10 runtime. |
+| Other .NET MCP debuggers | netcoredbg-mcp, AspNetCoreDebuggerMcp, DebugMcpServer, DotnetDebugger.Mcp, debug-mcp, Csdbg.Mcp | Live debugging over DAP or ICorDebug. Of these, none documents a live Task listing; DebugMcpServer documents async state analysis on dump files. |
+| Many languages through one DAP server, .NET included | [debugmcp/mcp-debugger](https://github.com/debugmcp/mcp-debugger) | Task/heap view not documented. |
+| Debugging inside VS Code with a human watching | [microsoft/DebugMCP](https://github.com/microsoft/DebugMCP) | The extension needs VS Code; a standalone CLI that does not is also described. Task view not documented. |
+| Python / Node / Java / browser, no IDE | [bastiencb/claude-mcp-debugger](https://github.com/bastiencb/claude-mcp-debugger) | .NET not documented. |
 
-The one thing ClrVoyant has that DAP-based tools structurally cannot: a **"Tasks
-window"** — enumerate every in-flight `Task` and its await/continuation graph (via
-ClrMD), the thing you actually need to debug a stuck `async` method. The price is
-focus: it does **.NET only**, deeply, instead of many languages shallowly.
-
-Fuller breakdown with sources: [docs/comparison.md](docs/comparison.md).
+The Debug Adapter Protocol has no request for listing `Task`s or heap objects; ClrVoyant
+gets them from ClrMD. The price is focus: .NET only, headless.
 
 ## Known limitations
 
-- **One debugger per process.** ClrVoyant can't attach to a process another
-  debugger already owns — e.g. an app started with the Visual Studio / Rider
-  debugger (F5 / *Start Debugging*). A .NET process allows a single debugger
-  (ICorDebug), so the second attach is refused. Run the target **without** the IDE
-  debugger (*Start Without Debugging* / Ctrl+F5 / `dotnet run`), or detach the IDE
-  first (VS: *Debug → Detach All*, which leaves the app running). This is an
-  OS/runtime constraint, not a ClrVoyant limitation.
-- **A PDB — not Debug-vs-Release — is what gates breakpoints and locals.** netcoredbg
-  disables JIT optimization on module load, so an assembly compiled with optimizations
-  ON still debugs cleanly **as long as it ships a PDB**: breakpoints bind, stepping
-  works, and locals are readable (the test suite verifies this against an optimized
-  build). With **no PDB** (DLLs/EXE only) netcoredbg cannot place breakpoints at all —
-  neither by line nor by method name; `pause` into the target and use the ClrMD
-  `Task`/heap view instead (it reads runtime metadata, so it needs no PDB). Residual
-  caveat: the *compiler* can still drop genuinely-dead locals or fold constants at the
-  IL level, and `[MethodImpl(AggressiveInlining)]` / cross-assembly inlining moves
-  code — those won't reappear; ordinary used locals and method frames stay visible.
-- Child-process auto-attach (`set_auto_attach`) discovers children by parent PID
-  **without suspending them**, so a child's very first startup instants may run
-  before the debugger attaches. Suspend-at-startup (tier 3) is not yet implemented.
-- `evaluate` runs code in the target — treat as dangerous.
-- `pause` requires a thread known from a prior stop (netcoredbg does not
-  enumerate threads of a freely-running process).
-- Targets must be **.NET 8+** (netcoredbg does not debug .NET Framework).
+- **One debugger per process.** ClrVoyant cannot attach to a process another debugger
+  already owns, for example an app started with the Visual Studio or Rider debugger. A
+  .NET process allows a single debugger (ICorDebug). Run the target without the IDE
+  debugger (Ctrl+F5, `dotnet run`), or detach the IDE first. This is an OS/runtime
+  constraint.
+- **A PDB, not Debug-vs-Release, gates breakpoints and locals.** netcoredbg disables JIT
+  optimization on module load, so an optimized assembly **with** a PDB still debugs
+  (breakpoints bind, stepping works, locals are readable; the test suite verifies this).
+  With **no PDB**, breakpoints cannot be placed at all, by line or by method name;
+  `pause` into the target and use the ClrMD `Task`/heap view, which needs no PDB. The
+  compiler can still drop dead locals or inline code, and those will not reappear.
+- Child-process auto-attach (`set_auto_attach`) does not suspend children, so a child's
+  very first instants may run before attach. Suspend-at-startup is not implemented.
+- `evaluate` runs code in the target: treat it as dangerous.
+- `pause` is best-effort: netcoredbg cannot always break into a freely running process,
+  and it needs a thread known from an earlier stop.
 
-## Tests & coverage
+## Tests
 
 ```pwsh
-dotnet test tests/ClrVoyant.Tests --settings coverlet.runsettings
+dotnet test tests/ClrVoyant.Tests                                                  # everything runnable here
+dotnet test tests/ClrVoyant.Tests --filter "Category!=Integration&Category!=Packaging"   # fast tests only
 ```
 
-Unit tests exercise the real logic — the wait-based execution model, the
-breakpoint store, content-based breakpoint resolution, and Task status/async-method
-decoding — with a fake engine; integration tests drive a **real** netcoredbg + ClrMD
-against `SampleApp` (launch → breakpoint → inspect → enumerate Tasks). Line coverage
-is high as a by-product, but the point is the behaviours above, not the number. See
-[docs/testing.md](docs/testing.md).
+Layers: unit tests over a fake engine, a DAP client against a scripted adapter, the tool
+surface through a real MCP client, and integration tests that drive real netcoredbg and
+ClrMD against sample apps on each target runtime. See
+[docs/testing.md](https://github.com/matejo-dev/ClrVoyant/blob/main/docs/testing.md).
 
 ## Layout
 
@@ -272,32 +282,39 @@ is high as a by-product, but the point is the behaviours above, not the number. 
 src/ClrVoyant.Core         models, IDebugEngine, Session, SessionManager
 src/ClrVoyant.Dap          DAP client + DapEngine (netcoredbg)
 src/ClrVoyant.Inspection   ClrMD TaskInspector (Tasks + async graph) + method discovery
-src/ClrVoyant.Server       MCP stdio host + tools
-tools/netcoredbg          bundled debug engine (all RIDs staged into the package)
-samples/SampleApp         a target app for tests
-spike/                    the de-risking proof-of-concept
-scripts/mcp-driver.ps1    stdio test harness
+src/ClrVoyant.Server       MCP host: tools, filters, stdio and HTTP transports
+tools/                     scripts that fetch netcoredbg at build time (not committed)
+samples/                   target apps for the tests (net8.0/net9.0/net10.0)
+tests/ClrVoyant.Tests      the test suite
+deploy/                    Dockerfile + Kubernetes sidecar manifest
+docs/                      architecture, tool reference, security, ADRs
+spike/                     historical experiments (not built, not maintained)
+scripts/                   MCP stdio driver and end-to-end smoke scripts
 ```
+
+## Releases
+
+See the [changelog](https://github.com/matejo-dev/ClrVoyant/blob/main/CHANGELOG.md).
+Release files (`.nupkg`, `.snupkg`, `SHA256SUMS`) and their provenance attestations are on
+the GitHub Releases page; how to verify them is in
+[docs/security.md](https://github.com/matejo-dev/ClrVoyant/blob/main/docs/security.md#supply-chain).
+To report a vulnerability, see
+[SECURITY.md](https://github.com/matejo-dev/ClrVoyant/blob/main/SECURITY.md).
 
 ## Acknowledgments
 
-ClrVoyant stands on:
+ClrVoyant stands on **[netcoredbg](https://github.com/Samsung/netcoredbg)** (Samsung,
+MIT), **[ClrMD](https://github.com/microsoft/clrmd)** (Microsoft, MIT), the
+**[Debug Adapter Protocol](https://microsoft.github.io/debug-adapter-protocol/)**
+(Microsoft), and the **[Model Context Protocol](https://modelcontextprotocol.io)** and its
+C# SDK. Prior art that shaped the design space:
+[microsoft/DebugMCP](https://github.com/microsoft/DebugMCP) and
+[debugmcp/mcp-debugger](https://github.com/debugmcp/mcp-debugger). Licenses:
+[THIRD-PARTY-NOTICES.md](https://github.com/matejo-dev/ClrVoyant/blob/main/THIRD-PARTY-NOTICES.md).
 
-- **[netcoredbg](https://github.com/Samsung/netcoredbg)** (Samsung, MIT) — the .NET
-  debug engine, driven over DAP.
-- **[ClrMD](https://github.com/microsoft/clrmd)** (Microsoft, MIT) — heap/Task
-  introspection, the basis of the "Tasks window".
-- The **[Debug Adapter Protocol](https://microsoft.github.io/debug-adapter-protocol/)**
-  (Microsoft) and the **[Model Context Protocol](https://modelcontextprotocol.io)**
-  (Anthropic) and its C# SDK.
-
-Prior art that shaped the design space: [microsoft/DebugMCP](https://github.com/microsoft/DebugMCP)
-and [debugmcp/mcp-debugger](https://github.com/debugmcp/mcp-debugger). See
-[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) for licenses.
-
-Thanks to **[@robselleri70](https://github.com/robselleri70)** for the initial
-idea that sparked this project.
+Thanks to **[@robselleri70](https://github.com/robselleri70)** for the initial idea that
+sparked this project.
 
 ## License
 
-[MIT](LICENSE) © Matteo Panzacchi
+[MIT](https://github.com/matejo-dev/ClrVoyant/blob/main/LICENSE) © Matteo Panzacchi

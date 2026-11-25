@@ -31,10 +31,13 @@ the PID namespace). HTTP transport is what lets the agent reach it from outside.
 
 ## Pieces
 
-- **[Dockerfile](Dockerfile)** — builds the Linux image: publishes the server and
-  bundles the architecture-matching `netcoredbg` (linux-x64, or linux-arm64 when
-  built with `docker buildx build --platform linux/arm64`). HTTP transport; no
-  token baked in.
+- **[Dockerfile](Dockerfile)** — builds the Linux image on the .NET 10 SDK and
+  ASP.NET Core images: publishes the server and bundles the architecture-matching
+  `netcoredbg` (linux-x64, or linux-arm64 when built with
+  `docker buildx build --platform linux/arm64`). HTTP transport; no token baked in. The
+  image sets `CLRVOYANT_HTTP_URL=http://0.0.0.0:3001` **explicitly**: the server's own
+  default is loopback, and a sidecar is reached through the pod network (the server logs
+  a warning for the non-loopback bind).
 - **[clrvoyant-sidecar.yaml](clrvoyant-sidecar.yaml)** — a Deployment with
   `shareProcessNamespace: true`, the app container, and the ClrVoyant sidecar with
   `CAP_SYS_PTRACE` and the auth token from a Secret that **you create** with
@@ -106,8 +109,21 @@ An authenticated caller can attach a debugger, set breakpoints, and **evaluate
 code** in the app process — i.e. arbitrary code execution in that POD. Therefore:
 
 - The server **fails closed**: HTTP refuses to start without `CLRVOYANT_AUTH_TOKEN`.
+  Failed authentications are logged with the caller's address (`auth -> denied
+  remote=<address>`; behind `port-forward` that is the forwarder's address).
+- The token gives full control of every debug session on the sidecar, with no per-caller
+  identity. That includes `debug_launch` with arbitrary environment variables (for
+  example `DOTNET_STARTUP_HOOKS`, which loads an assembly into the new process) and
+  `list_processes`, whose command lines can contain secrets.
 - Keep the endpoint **cluster-internal** (ClusterIP + `port-forward`, or mTLS).
   Do **not** expose it via a public Service/Ingress.
+- The shipped manifest adds only `SYS_PTRACE` (it does not drop the other default
+  capabilities) and enables `allowPrivilegeEscalation: false` and the `RuntimeDefault`
+  seccomp profile. The non-root / drop-all-capabilities profile is **untested** and left
+  commented out.
+- You build the image yourself from this repository. The release artefacts (the NuGet
+  package) come with a `SHA256SUMS` file and a build-provenance attestation; how to
+  verify them is in the supply-chain section of [docs/security.md](../docs/security.md).
 - Treat this as a **break-glass / non-prod** capability; rotate the token by
   redeploying (it is read once at startup), and use a `NetworkPolicy` to restrict who
   can reach port 3001.

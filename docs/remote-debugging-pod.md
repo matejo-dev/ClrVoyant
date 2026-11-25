@@ -49,23 +49,35 @@ not see the app's process at all. Three ingredients fix that:
 ## End-to-end flow
 
 ### A. Build the image — [`deploy/Dockerfile`](../deploy/Dockerfile)
-- `sdk` stage: `dotnet publish` the server. Publish stages netcoredbg for **all
+- `sdk` stage (.NET 10 SDK image): `dotnet publish` the server. Publish stages netcoredbg for **all
   supported RIDs** under `/app/tools/netcoredbg/<rid>/` (downloaded + SHA-256
   verified at publish time with built-in MSBuild tasks).
 - `aspnet` runtime stage (HTTP needs the ASP.NET shared framework): copies the
   publish output and `chmod +x` the Linux launcher(s) — **no download here**.
   `NetcoredbgLocator` then picks the image's RID. Build arm64 with
   `docker buildx build --platform linux/arm64`.
-- Sets `CLRVOYANT_TRANSPORT=http` and `CLRVOYANT_HTTP_URL=http://0.0.0.0:3001`. The
-  **token is not baked in** — the server fails closed without `CLRVOYANT_AUTH_TOKEN`.
+- Sets `CLRVOYANT_TRANSPORT=http` and, explicitly, `CLRVOYANT_HTTP_URL=http://0.0.0.0:3001`.
+  The server's own default is loopback; the sidecar is reached through the pod network,
+  so the image opts in to all interfaces (the server logs a warning saying so, and the
+  bearer token stays the gate). The **token is not baked in**: the server fails closed
+  without `CLRVOYANT_AUTH_TOKEN`.
 
 ### B. Deploy — [`deploy/clrvoyant-sidecar.yaml`](../deploy/clrvoyant-sidecar.yaml)
 A `Deployment` with `shareProcessNamespace: true`, the `app` container and the
-`clrvoyant` sidecar (token from a `Secret`, `SYS_PTRACE` added), plus a ClusterIP
-`Service`.
+`clrvoyant` sidecar, plus a ClusterIP `Service`. The token comes from a `Secret` **you
+create** with `kubectl create secret` (the manifest contains none). The image line
+holds a version placeholder (`X.Y.Z`): pin the exact version you built, never
+`:latest`. The sidecar's `securityContext` adds only `SYS_PTRACE`, and sets
+`allowPrivilegeEscalation: false` and the `RuntimeDefault` seccomp profile; it also
+sets resource requests and a memory limit (starting points, not measurements). A
+stricter non-root, drop-all-capabilities, read-only-filesystem profile is present only
+as a commented block that has **not been tested** against a real attach.
 
-### C. Connect the agent
+### C. Create the Secret and connect the agent
 ```sh
+kubectl create secret generic clrvoyant-auth \
+  --from-literal=token="$(openssl rand -hex 32)"
+kubectl apply -f deploy/clrvoyant-sidecar.yaml
 kubectl port-forward deploy/my-app-with-debugger 3001:3001
 ```
 ```json
@@ -75,11 +87,13 @@ kubectl port-forward deploy/my-app-with-debugger 3001:3001
     "headers": { "Authorization": "Bearer <token>" }
 }}}
 ```
-The bearer middleware rejects anything without the right token with `401`.
+The bearer middleware rejects anything without the right token with `401` (the
+`Bearer` scheme is matched case-insensitively) and logs each refusal with the remote
+address.
 
 ### D. The debug session (what the agent does)
-1. `list_processes()` — sees processes in the shared PID namespace; finds the app's
-   PID.
+1. `list_processes()` — sees processes in the shared PID namespace, with their command
+   lines (which can contain secrets); finds the app's PID.
 2. `debug_attach(<pid>)` — **netcoredbg ptrace-attaches** the app and becomes the
    controller (can stop it, set breakpoints, step).
 3. `set_breakpoint`, `continue`, `get_callstack`, `get_variables`, … — exactly as
@@ -103,7 +117,11 @@ read-only `/proc/<pid>/mem` read with **no second ptrace stop** — coexists cle
 An authenticated caller can attach a debugger and **`evaluate` code** in the app
 process — i.e. arbitrary code execution in that POD. Therefore:
 
-- The server **fails closed** (no token → won't start).
+- The server **fails closed** (no token → won't start). Outside the image it listens on
+  loopback unless told otherwise; the image binds all interfaces for the pod network.
+- The token gives full control of every debug session on that sidecar, including
+  `debug_launch` with arbitrary `env` (for example `DOTNET_STARTUP_HOOKS`) and
+  `list_processes` command lines; there is no per-caller identity.
 - Keep the endpoint **cluster-internal**: ClusterIP + `port-forward` (or mTLS at an
   ingress). **Never** a public Service/Ingress.
 - Treat it as **break-glass / non-prod**: rotate the token by redeploying (it is read
@@ -115,8 +133,11 @@ Full threat model: [docs/security.md](security.md).
 
 The same image runs as a plain container if you just want HTTP transport locally:
 ```sh
-docker run --rm -e CLRVOYANT_AUTH_TOKEN=secret -p 3001:3001 \
-  --cap-add=SYS_PTRACE clrvoyant:latest
+TOKEN="$(openssl rand -hex 32)"   # keep it: the client needs it
+docker run --rm -e CLRVOYANT_AUTH_TOKEN="$TOKEN" \
+  -p 127.0.0.1:3001:3001 --cap-add=SYS_PTRACE clrvoyant:latest
 ```
-Debugging a process in *another* container still requires sharing a PID namespace
+The image listens on all interfaces inside the container; publish the port on
+loopback only (`127.0.0.1:` above) unless you mean to expose it. Debugging a process
+in *another* container still requires sharing a PID namespace
 (`--pid=container:<id>`) and `SYS_PTRACE`, mirroring the POD model.

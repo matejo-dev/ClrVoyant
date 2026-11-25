@@ -1,16 +1,15 @@
 # ClrVoyant — Implementation Plan
 
-> **Historical.** This is the original phased plan (the project was built from it).
-> For the architecture **as built** see [architecture.md](architecture.md); for the
-> decisions and their rationale see the [ADRs](adr/README.md). All phases here are
-> done, plus later work (cross-OS, HTTP/POD, `debug_test`, `list_processes`).
+> **SUPERSEDED. Kept for history only. Do not use this as a reference.**
+> This is the plan written *before* the server existed. Names, tool signatures, scope
+> decisions and the project layout below are the original intentions and have changed
+> (several items listed as out of scope or deferred were later implemented). For the
+> system as built see [architecture.md](../architecture.md) and [tools.md](../tools.md);
+> for the decisions and their rationale see the [ADRs](../adr/README.md).
 
 A local MCP server that lets an agent deterministically debug .NET applications:
 launch, set breakpoints, step, inspect variables / call stack / threads, and
 enumerate all async `Task`s — "everything a developer looks at while debugging".
-
-Status: architecture validated by the spike under [`/spike`](../spike). This
-document is the plan to turn that spike into a real server.
 
 ---
 
@@ -190,7 +189,7 @@ the most expensive single feature and is isolated in Phase 5.
 
 ```
 ClrVoyant/
-  docs/IMPLEMENTATION_PLAN.md      ← this file
+  docs/archive/IMPLEMENTATION_PLAN.md  ← this file
   spike/                            ← validated proof-of-concept (kept as reference)
   src/
     ClrVoyant.Core/
@@ -254,11 +253,3 @@ Each phase is covered by an integration test driving `samples/SampleApp`.
 - **Stale-handle safety.** Enforced via `(sessionId, stopId)` tagging (§5).
 - **Build responsibility.** `debug_launch` expects a built `.dll`; the agent
   builds via its own tooling. Revisit if a `build=true` convenience is wanted.
-
----
-
-## 10. Immediate next step
-
-Phase 0 + Phase 1: scaffold the solution, bundle netcoredbg, stand up the MCP
-stdio host, and port the spike's `DapClient` into `ClrVoyant.Dap` behind
-`debug_launch` / `debug_status` / `debug_stop`.

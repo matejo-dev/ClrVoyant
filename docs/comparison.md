@@ -1,71 +1,109 @@
 # ClrVoyant vs other MCP debuggers
 
-An honest "what you get / what you give up" comparison, so you can pick the right
-tool. The goal is **fit**, not ranking — ClrVoyant is deliberately narrow.
+A "what you get / what you give up" comparison to help you pick a tool. The goal is
+**fit**, not ranking: ClrVoyant is deliberately narrow (.NET only, headless).
 
-The MCP-debugger space splits into three shapes:
+## How this was checked
 
-1. **DAP multiplexers** — one MCP server fronting many language debuggers over the
-   Debug Adapter Protocol (DAP). Broad language coverage; capabilities are the
-   common denominator of DAP.
-2. **IDE-hosted** — an MCP server inside an editor (VS Code), reusing the editor's
-   debug stack. Visual, human-in-the-loop; tied to the editor.
-3. **Single-runtime, deep** — focused on one runtime, going past DAP. **ClrVoyant**
-   is this: .NET only, with async/`Task` introspection DAP cannot express.
+On **2026-11-25** the project pages listed below (GitHub READMEs and NuGet package
+pages) were read. Nothing was installed or run; every statement is what that page says
+about itself, and the pages change. **"Not documented"** means the page text read does not
+mention the capability, which is not the same as the capability being absent. Counts
+("27 tools") are the page's own. Competitor information is of the date above: check the
+project before deciding.
 
-## Feature matrix
+## The shapes of tools
 
-| | ClrVoyant | mcp-debugger | microsoft/DebugMCP | claude-mcp-debugger |
-|---|---|---|---|---|
-| Shape | single-runtime, deep | DAP multiplexer | IDE-hosted (VS Code) | DAP multiplexer |
-| Languages | .NET 8/9/10 only | Python, JS, Go, Rust, Java, .NET | 9 languages | Python, Node, Java, browser |
-| Engine | netcoredbg (DAP) **+ ClrMD** | per-language DAP adapters | VS Code Debug API | DAP + CDP |
-| Headless (no IDE) | ✅ | ✅ | ❌ (needs VS Code) | ✅ |
-| Transports | stdio + HTTP | stdio + HTTP | HTTP | stdio |
-| Multi-session | ✅ | ✅ | ❌ | partial (Node children) |
-| **Async `Task` / heap view** | ✅ (the differentiator) | ❌ | ❌ | ❌ |
-| Remote / in-POD | ✅ (sidecar, [docs](remote-debugging-pod.md)) | via container | ❌ | ❌ |
-| Distribution | dotnet tool / container / source | npm / npx / docker | VS Code extension | install script |
+1. **Multi-language DAP front ends.** One MCP server over several debug adapters
+   (Debug Adapter Protocol, DAP). Broad language coverage; capabilities are those the
+   adapter exposes.
+2. **IDE-hosted.** An MCP server inside an editor, reusing its debug stack. Visual, with
+   a human in the loop.
+3. **.NET-specific servers.** Several exist (next section). Most drive netcoredbg or
+   another .NET debugger over DAP.
+4. **.NET dump and diagnostics servers.** Analyse a dump file or a process's runtime data
+   instead of (or besides) live debugging.
 
-## What you get / what you give up
+ClrVoyant is in the third group. It adds ClrMD heap reads next to netcoredbg, to expose
+the Tasks of a live process stopped under the debugger.
 
-### ClrVoyant (this project)
-- **Get:** the only one that enumerates every in-flight `Task` and its
-  await/continuation graph (via ClrMD) — what you actually need for a stuck `async`
-  method; headless; HTTP/POD remote debugging; multi-session.
-- **Give up:** breadth. **.NET 8+ only.** No visual IDE surface — a human follows
-  the debug through the agent's output, not editor panes.
+## .NET-specific MCP debuggers
 
-### [debugmcp/mcp-debugger](https://github.com/debugmcp/mcp-debugger)
-- **Get:** one server for Python, JS, Rust, Go, Java, **and .NET** over DAP;
-  mature (CI, coverage, OpenSSF badges); npm + Docker; stdio + HTTP; multi-session.
-- **Give up:** DAP's ceiling — **no async/`Task`/heap view**. For .NET it gives the
-  standard breakpoint/step/variables surface but not the Tasks window. .NET is one
-  of many runtimes, not a deep focus.
+| Project | Engine (per its page) | Live debugging | Async / `Task` features documented | Requires | License | Version listed (page date) |
+|---|---|---|---|---|---|---|
+| **ClrVoyant** (this) | netcoredbg over DAP, plus ClrMD for heap reads | launch, attach, `debug_test`, breakpoints, stepping, variables, evaluate | `list_tasks` (all Tasks of the stopped process, with status and async method), `get_async_graph`, `get_async_callstack` | .NET 10 runtime for the tool; targets .NET 8/9/10 | MIT | see [CHANGELOG](../CHANGELOG.md) |
+| [netcoredbg-mcp](https://github.com/thebtf/netcoredbg-mcp) (PyPI) | netcoredbg, DAP, Windows UI Automation | launch, attach, breakpoints, stepping, variables | Not documented (135 tools listed, none for Tasks) | Python 3.10+, netcoredbg (setup wizard can fetch it); Windows for the UI-automation tools | MIT | v0.23.17 (GitHub) |
+| [AspNetCoreDebuggerMcp](https://www.nuget.org/packages/AspNetCoreDebuggerMcp) | netcoredbg bundled (linux, win, osx), DAP | launch, attach, breakpoints, stepping, variables | `hang_analyze` pauses the process and classifies each thread's blocking pattern ("Monitor / Task / Semaphore / async"); no Task or async-graph listing documented | .NET 10 SDK; stdio mentioned | MIT | 1.4.0 (2026-09-08) |
+| [DebugMcpServer](https://www.nuget.org/packages/DebugMcpServer) | DAP (netcoredbg for .NET; also Python, Node.js, C/C++); ClrMD for .NET **dump** analysis | launch, attach via DAP | `dotnet_dump_async_state` "Analyze async Tasks and state machines (deadlock diagnosis)", on a **loaded dump file**; no live-process Task enumeration documented | .NET 8 | MIT | 0.7.0 (2026-03-13) |
+| [DotnetDebugger.Mcp](https://www.nuget.org/packages/DotnetDebugger.Mcp) | "clrdbg, driven over DAP" | launch, attach, breakpoints, stepping, variables; MAUI tooling | Not documented | .NET 10 SDK | MIT | 0.8.0 (2026-10-25) |
+| [debug-mcp](https://www.nuget.org/packages/debug-mcp) | ICorDebug directly (no DAP) | launch, attach, breakpoints, tracepoints, inspection (34 tools) | Not documented | .NET 10 SDK; Linux (Windows and macOS "planned") | **AGPL-3.0** | 0.20.0 (2026-08-26) |
+| [Csdbg.Mcp](https://www.nuget.org/packages/Csdbg.Mcp) | netcoredbg, started on demand | launch, attach, breakpoints, stepping, variables | Not documented | .NET 10 SDK | MIT | 0.2.2 (2026-07-27) |
 
-### [microsoft/DebugMCP](https://github.com/microsoft/DebugMCP)
-- **Get:** 9 languages; runs inside VS Code so a human sees the session live and
-  can take over; line-content breakpoints.
-- **Give up:** it needs VS Code running (not truly headless / CI-friendly), is
-  bounded by the VS Code Debug API, and has no async-Tasks view.
+Also seen in search results and **not assessed** here: `dotnet-diagnostics-mcp`,
+`MemoryLens.Mcp`, [`tonyredondo/debugger-mcp-server`](https://github.com/tonyredondo/debugger-mcp-server)
+and a ClrMD-based dump-analysis server by another author. They appeared to be dump or
+diagnostics oriented; nothing is claimed about them.
 
-### [bastiencb/claude-mcp-debugger](https://github.com/bastiencb/claude-mcp-debugger)
-- **Get:** Python/Node/Java/**browser** debugging, no IDE; set-variable; CDP for
-  the browser; tidy one-command install.
-- **Give up:** no .NET; no async/heap inspection.
+What this table supports, and no more: among the pages read, ClrVoyant is the one whose
+documentation describes enumerating the `Task`s of a live process that is stopped under
+the debugger, and reconstructing its await/continuation graph. DebugMcpServer documents
+async state-machine analysis for dump files, which answers a different situation (a
+crash dump versus a process you can stop and step); AspNetCoreDebuggerMcp documents a
+thread-blocking classification. Others do not document anything of the kind. Whether
+such features exist undocumented, or are added later, this comparison cannot say.
 
-Other projects in the space: [KashunCheng/dap_mcp](https://github.com/KashunCheng/dap_mcp),
-[Govinda-Fichtner/debugger-mcp](https://github.com/Govinda-Fichtner/debugger-mcp)
-(Rust DAP bridge), [Digital-Defiance/mcp-debugger-server](https://github.com/Digital-Defiance/mcp-debugger-server)
-(Node/TS via CDP, profiling), [mizchi/debugger-mcp](https://github.com/mizchi/debugger-mcp).
+## Multi-language and IDE-hosted tools
+
+| | mcp-debugger | microsoft/DebugMCP | claude-mcp-debugger |
+|---|---|---|---|
+| Source | [debugmcp/mcp-debugger](https://github.com/debugmcp/mcp-debugger) | [microsoft/DebugMCP](https://github.com/microsoft/DebugMCP) | [bastiencb/claude-mcp-debugger](https://github.com/bastiencb/claude-mcp-debugger) |
+| Shape | DAP front end | VS Code extension, plus a standalone CLI | DAP front end |
+| Languages (per page) | Python, JS/TS, Ruby, Rust, Go, Java, .NET, C/C++, COBOL, Dart/Flutter (the page also says "ten" and "seven" languages in different places) | extension: Python, JS/TS, Java, C/C++, Go, Rust, PHP, Ruby, C#/.NET; CLI: any DAP adapter over stdio, with shorthands including `csharp` / `dotnet` | Python, Node.js, Java, browser JavaScript; .NET not mentioned |
+| .NET | via netcoredbg; the container image excludes .NET and Go (run it with npm/npx on the host) | through the C# VS Code extension; or a DAP adapter you configure for the CLI | not mentioned |
+| Needs an IDE | "No IDE required" | The VS Code extension needs VS Code (with language extensions); the standalone CLI "does not require VS Code" | "No IDE", headless |
+| MCP transports | stdio, Streamable HTTP (loopback by default) | extension: Streamable HTTP on localhost:3001; CLI: not stated | stdio mentioned |
+| Multi-session | yes ("every MCP client of it sees the same debug sessions") | not clearly documented | not documented |
+| Async `Task` / heap view | not documented | not documented | not documented |
+| Tools | 29 | 18 | 22 (the page also says 23) |
+| License | MIT | MIT | MIT |
+
+### What you get and what you give up
+
+**ClrVoyant.** Get: the Tasks view of a stopped live process, no IDE, a sidecar image
+for Kubernetes pods, multi-session with `wait_for_any_stop`, debugging without source
+(`list_methods`, `set_function_breakpoint`), `debug_test`. Give up: breadth (.NET 8/9/10
+only; Windows x64, Linux x64/arm64; no macOS, [ADR-0011](adr/0011-supported-architectures.md)),
+a visual surface, and the reach of the .NET-specific projects above that target other
+platforms or workflows (MAUI tooling, Windows UI automation, macOS).
+
+**mcp-debugger.** Get: one server for many languages, including .NET, with stdio and
+HTTP and multi-session. Give up: for .NET it is the generic DAP surface; no Task view is
+documented, and the container image does not include .NET.
+
+**microsoft/DebugMCP.** Get: a human watching and able to take over in VS Code, many
+languages, and a standalone CLI that does not need VS Code. Give up: the extension needs VS Code running; no Task view is
+documented.
+
+**claude-mcp-debugger.** Get: Python, Node.js, Java and browser debugging without an
+IDE. Give up: no .NET is documented.
+
+Other multi-language projects, listed without having been checked on 2026-11-25: [KashunCheng/dap_mcp](https://github.com/KashunCheng/dap_mcp),
+[Govinda-Fichtner/debugger-mcp](https://github.com/Govinda-Fichtner/debugger-mcp),
+[Digital-Defiance/mcp-debugger-server](https://github.com/Digital-Defiance/mcp-debugger-server),
+[mizchi/debugger-mcp](https://github.com/mizchi/debugger-mcp).
 
 ## The short version
 
-If you debug **many languages**, use a DAP multiplexer (mcp-debugger) or, if you
-want a human in the loop in VS Code, microsoft/DebugMCP. If you debug **.NET** and
-care about **async/`Task` state** — especially headless or inside a POD — ClrVoyant
-gives you the Tasks view the others structurally can't, in exchange for being
-.NET-only.
+Debugging **many languages**: a multi-language server (mcp-debugger, or microsoft/DebugMCP
+if you want a human in VS Code). Debugging **.NET**: there are several options
+(table above); choose by what you need. If you need to see **what every in-flight
+`Task` is awaiting** in a process you can stop under a debugger, ClrVoyant is the one
+whose documentation says it does that, in exchange for being .NET-only. If you are
+analysing a **crash dump**, look at the dump-analysis servers instead.
 
-*Sources: project READMEs as of June 2026 — links above. Details change; verify
-against each project before deciding.*
+The Debug Adapter Protocol has no request for listing the Tasks or objects on a heap, so
+a DAP-only tool cannot offer this without a second mechanism; ClrVoyant's is ClrMD
+([ADR-0002](adr/0002-two-engines-one-contract.md)).
+
+*Sources (read 2026-11-25):* the GitHub pages linked above, and the NuGet package pages
+for AspNetCoreDebuggerMcp, DebugMcpServer, DotnetDebugger.Mcp, debug-mcp and Csdbg.Mcp.

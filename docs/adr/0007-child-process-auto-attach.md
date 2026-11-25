@@ -41,3 +41,21 @@ shared with the `list_processes` tool.
   tier 3.
 - **No auto-attach at all** — leaves child-heavy debugging tedious. Rejected;
   tier 2 is opt-in so it costs nothing when off.
+
+## Update (2026-11-25)
+
+- **Ownership is inherited.** A child auto-attached from a session whose debuggee this
+  server owns (launched, or the host behind `debug_test`) is part of a process tree the
+  server started: it is **terminated** when its session ends, and so are grandchildren.
+  A child of an *attached* session is detached and left running. See `debug_stop` in
+  [tools.md](../tools.md).
+- **Creation-time check.** A matching parent PID is not proof of parentage: an OS keeps
+  recording the creator's PID after the creator is gone, and PIDs are recycled. A
+  process is adopted only if it was created no earlier than its parent; if either
+  creation time is unknown it is left alone (`debug_attach` still covers it). Sessions
+  whose process is gone no longer count as parents. This matters beyond a wrong session:
+  an adopted stranger of a launched session would have been killed on `debug_stop`.
+- **Retry limit.** An attach that fails is retried on later scans at most 3 times per
+  process identity (PID plus creation stamp), then left alone, so a process that cannot
+  be attached (another debugger owns it, access denied) does not cost a netcoredbg
+  spawn on every scan.

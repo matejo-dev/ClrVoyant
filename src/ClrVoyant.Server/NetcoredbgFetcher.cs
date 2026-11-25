@@ -41,6 +41,11 @@ internal static class NetcoredbgFetcher
 
         string cacheDir = Path.Combine(CacheRoot(env), "netcoredbg", version);
         string exe = Path.Combine(cacheDir, exeName);
+        // NOTE: the stamp gates trust. A cache directory holding the engine but not
+        // `netcoredbg-<version>.stamp` (filled by hand, or by a release that wrote no stamp) is
+        // NOT complete: it is refetched below, and under CLRVOYANT_NO_FETCH resolution fails
+        // instead of using it. That is deliberate (an interrupted extraction must never be trusted)
+        // but air-gapped users with a hand-filled cache must add the stamp or use CLRVOYANT_NETCOREDBG.
         if (IsComplete(cacheDir, exeName, version)) return exe;
 
         // Opt-out for air-gapped / locked-down environments: cache-only, never download.
@@ -51,6 +56,11 @@ internal static class NetcoredbgFetcher
 
         Directory.CreateDirectory(Path.GetDirectoryName(cacheDir)!);
         // A sibling of the cache directory, so the final rename stays on one file system.
+        // NOTE: the `finally` below removes this directory on every path that runs it, but a
+        // process that is killed mid-fetch never gets there and leaves it behind. Nothing sweeps
+        // `*.tmp` siblings of the cache directory, so such leftovers accumulate (never trusted,
+        // only disk space). Add a sweep (e.g. delete stale `<version>.*.tmp` before creating this
+        // one) if that ever matters.
         string work = $"{cacheDir}.{Guid.NewGuid():N}.tmp";
         Directory.CreateDirectory(work);
         try
