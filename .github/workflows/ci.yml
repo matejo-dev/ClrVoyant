@@ -91,7 +91,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           set -euo pipefail
-          runtime_image=$(sed -n 's/^FROM \([^ ]*\) AS runtime.*//p' deploy/Dockerfile)
+          runtime_image=$(sed -n 's/^FROM \([^ ]*\) AS runtime.*/\1/p' deploy/Dockerfile)
           test -n "$runtime_image"
           for image in "$runtime_image" ubuntu:22.04; do
             echo "== $image"
