@@ -37,7 +37,18 @@ the PID namespace). HTTP transport is what lets the agent reach it from outside.
   token baked in.
 - **[clrvoyant-sidecar.yaml](clrvoyant-sidecar.yaml)** — a Deployment with
   `shareProcessNamespace: true`, the app container, and the ClrVoyant sidecar with
-  `CAP_SYS_PTRACE` and the auth token from a Secret.
+  `CAP_SYS_PTRACE` and the auth token from a Secret that **you create** with
+  `kubectl create secret` (the manifest ships no token, so applying it unedited
+  cannot deploy a known one). It also sets `allowPrivilegeEscalation: false`, the
+  `RuntimeDefault` seccomp profile and resource requests/limits (heap inspection
+  is memory-hungry: size the memory limit to the app's heap). A stricter
+  non-root / read-only-filesystem profile is included as a commented, **untested**
+  block.
+
+**Pin the image by version.** The manifest uses `your-registry/clrvoyant:X.Y.Z`,
+not `:latest`: a mutable tag lets the container that can attach to and evaluate
+code in your app change silently on the next pull. Build and push an explicit
+version tag and put it in the `image:` line.
 
 ## Requirements
 
@@ -54,14 +65,18 @@ the PID namespace). HTTP transport is what lets the agent reach it from outside.
 ## Connect an agent
 
 ```sh
-# 1) Build & push the image
-docker build -t your-registry/clrvoyant:latest -f deploy/Dockerfile .
-docker push your-registry/clrvoyant:latest
+# 1) Build & push the image under an explicit version tag (not :latest)
+docker build -t your-registry/clrvoyant:X.Y.Z -f deploy/Dockerfile .
+docker push your-registry/clrvoyant:X.Y.Z
 
-# 2) Set a strong token in the Secret, then apply
+# 2) Create the auth Secret (a strong random token; the manifest contains none)
+kubectl create secret generic clrvoyant-auth \
+  --from-literal=token="$(openssl rand -hex 32)"
+
+# 3) Put the same X.Y.Z in the manifest's `image:` line, then apply
 kubectl apply -f deploy/clrvoyant-sidecar.yaml
 
-# 3) Forward the MCP port (keep it cluster-internal — no public Ingress)
+# 4) Forward the MCP port (keep it cluster-internal — no public Ingress)
 kubectl port-forward deploy/my-app-with-debugger 3001:3001
 ```
 

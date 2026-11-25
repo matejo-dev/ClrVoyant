@@ -1,0 +1,24 @@
+# Minimal formatting baseline only (charset, newlines, indentation). It does not
+# enforce code style or set analyzer severities.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+indent_style = space
+indent_size = 2
+
+# Mirrors .gitattributes: *.sh must be LF, Windows-side scripts stay CRLF.
+[*.{ps1,cmd,bat}]
+end_of_line = crlf
+
+[*.cs]
+indent_size = 4
+
+[*.ps1]
+indent_size = 4
+
+# Markdown: trailing double-space is a hard line break, so never trim it.
+[*.md]
+trim_trailing_whitespace = false

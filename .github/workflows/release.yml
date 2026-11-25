@@ -1,7 +1,14 @@
 # Publish ClrVoyant to NuGet.org on a version tag, using Trusted Publishing
 # (GitHub OIDC -> short-lived API key). No long-lived NuGet secret is stored.
 #
-# One-time setup (this workflow runs in the GitHub Environment `release`):
+# Two jobs, so the OIDC token and the write permissions are never available to
+# steps that execute repository code:
+#   test    (read-only)  checks tag == package version, builds, runs the full test
+#                        suite, packs, writes SHA256SUMS, uploads the files.
+#   publish (OIDC)       runs NO repository code: verifies the checksums, attests
+#                        provenance, pushes to NuGet.org, creates the GitHub Release.
+#
+# One-time setup (the publish job runs in the GitHub Environment `release`):
 #   1. GitHub: Settings -> Environments -> New environment `release` (add a
 #      required reviewer if you want a manual approval gate before publishing).
 #   2. GitHub: in that `release` environment, add an Environment variable
@@ -10,75 +17,181 @@
 #        Repository Owner: matejo-dev   Repository: ClrVoyant
 #        Workflow File: release.yml     Environment: release
 #
-# Publish a release by pushing a tag, e.g.:  git tag v0.1.0 && git push origin v0.1.0
-# The published package version is taken from the tag (v0.1.0 -> 0.1.0), so the tag
-# is the single source of truth — no need to bump <Version> in the csproj.
+# To release: bump <Version> in src/ClrVoyant.Server/ClrVoyant.Server.csproj, merge,
+# then tag the merge commit:  git tag v0.3.0 && git push origin v0.3.0
+#
+# Single source of truth for the version: the <Version> property in the csproj (it
+# is reviewed in a PR, shows up in the commit the tag points to, and is what a
+# local `dotnet pack` produces). The tag only TRIGGERS the release; the `test` job
+# fails early if the tag (minus the leading "v") differs from that property. The
+# package is packed WITHOUT overriding the version, so tag and package cannot drift.
 name: release
 
 on:
   push:
-    tags: ['v*']
+    # Version-like tags only: vMAJOR.MINOR.PATCH, optionally with a -prerelease
+    # suffix (e.g. v0.3.0, v1.0.0-rc.1). Anything else (v-test, vfoo) never releases.
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-*'
 
 permissions:
   contents: read
-  id-token: write        # required: lets the job request a GitHub OIDC token
 
 jobs:
-  publish:
-    name: pack & publish to NuGet.org
+  test:
+    name: verify, test & pack
     runs-on: ubuntu-latest
-    environment: release     # gate + scopes NUGET_USER and the trusted-publishing policy
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          dotnet-version: '8.0.x'
+          persist-credentials: false
+
+      # 10.0 SDK builds; 8.0 and 9.0 supply the runtimes the sample debuggees
+      # (net8.0;net9.0;net10.0) are launched on by the integration tests.
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: |
+            10.0.x
+            9.0.x
+            8.0.x
+
+      # Fail early (before the long test run) if the tag and the csproj disagree.
+      - name: Check tag matches package version
+        id: ver
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          tag_version="${TAG#v}"
+          pkg_version="$(dotnet msbuild src/ClrVoyant.Server/ClrVoyant.Server.csproj -getProperty:Version)"
+          echo "tag version:     ${tag_version}"
+          echo "package version: ${pkg_version}"
+          if [ "${tag_version}" != "${pkg_version}" ]; then
+            echo "::error::Tag '${TAG}' does not match <Version>${pkg_version}</Version> in ClrVoyant.Server.csproj. Bump the csproj (or re-tag) so they agree."
+            exit 1
+          fi
+          echo "version=${pkg_version}" >> "$GITHUB_OUTPUT"
 
       # Gate the release on a green build + full test suite (an immutable NuGet
-      # version must not ship untested). Sample targets are external processes.
-      - name: Build sample targets
-        run: |
-          dotnet build samples/SampleApp/SampleApp.csproj -c Release
-          dotnet build samples/ParentApp/ParentApp.csproj -c Release
+      # version must not ship untested). The test project builds the sample debuggees.
       - name: Test
-        run: dotnet test tests/ClrVoyant.Tests/ClrVoyant.Tests.csproj -c Release
+        run: >
+          dotnet test tests/ClrVoyant.Tests/ClrVoyant.Tests.csproj -c Release
+          --blame-hang-timeout 10m
+          --blame-hang-dump-type none
         env:
           # Also validate the installed-tool debug loop offline before shipping an
           # immutable version (covers the linux-x64 bundle on this runner).
           CLRVOYANT_PACKAGING_TESTS: '1'
+          # The three target runtimes are installed above: missing one is a failure.
+          CLRVOYANT_REQUIRE_TARGET_RUNTIMES: '1'
 
-      # Tag vX.Y.Z -> package version X.Y.Z (strip the leading "v").
-      - name: Derive version from tag
-        id: ver
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-
+      # No -p:Version override: the package version is the csproj's <Version>,
+      # already checked against the tag above.
       - name: Pack
-        run: >
-          dotnet pack src/ClrVoyant.Server/ClrVoyant.Server.csproj
-          -c Release -o "${{ runner.temp }}/nupkg"
-          -p:Version=${{ steps.ver.outputs.version }}
+        run: dotnet pack src/ClrVoyant.Server/ClrVoyant.Server.csproj -c Release -o dist
+
+      - name: Verify package and write checksums
+        working-directory: dist
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          test -f "ClrVoyant.${VERSION}.nupkg" || { echo "::error::ClrVoyant.${VERSION}.nupkg was not produced"; ls -la; exit 1; }
+          # .nupkg and (if produced) .snupkg, by plain file name so the sums are
+          # verifiable with `sha256sum -c SHA256SUMS` from the download directory.
+          find . -maxdepth 1 -type f \( -name '*.nupkg' -o -name '*.snupkg' \) -printf '%f\n' | LC_ALL=C sort | xargs sha256sum > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Upload package
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: package
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: attest, publish & release
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: release     # gate + scopes NUGET_USER and the trusted-publishing policy
+    permissions:
+      contents: write          # gh release create
+      id-token: write          # OIDC: NuGet trusted publishing + Sigstore signing
+      attestations: write      # store the provenance attestation
+      artifact-metadata: write # listed by actions/attest's README alongside the two above
+    # No checkout and no repository code in this job: it only handles the files
+    # the (read-only) test job produced.
+    steps:
+      - name: Download package
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: package
+          path: dist
+
+      # Defence in depth: the files must be byte-identical to what the test job summed.
+      - name: Verify checksums
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          sha256sum -c SHA256SUMS
+          ls -la
+
+      # Provenance first: if attestation fails nothing immutable has been published.
+      # SHA256SUMS lists every .nupkg/.snupkg, so each becomes an attested subject.
+      - name: Attest build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: dist/SHA256SUMS
 
       # Trusted Publishing: exchange the OIDC token for a 1-hour NuGet API key.
       - name: NuGet login (OIDC -> short-lived API key)
-        uses: NuGet/login@v1
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
         id: login
         with:
           user: ${{ vars.NUGET_USER }}
 
       - name: Push to NuGet.org
+        env:
+          NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
         run: >
-          dotnet nuget push "${{ runner.temp }}/nupkg/*.nupkg"
-          --api-key ${{ steps.login.outputs.NUGET_API_KEY }}
+          dotnet nuget push "dist/*.nupkg"
+          --api-key "$NUGET_API_KEY"
           --source https://api.nuget.org/v3/index.json
           --skip-duplicate
 
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          prerelease=()
+          case "${TAG}" in *-*) prerelease=(--prerelease) ;; esac
+          if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            # Re-run of a release that already exists: just (re)attach the files.
+            gh release upload "${TAG}" dist/* --clobber --repo "${GITHUB_REPOSITORY}"
+          else
+            gh release create "${TAG}" dist/* \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "${TAG}" \
+              --generate-notes \
+              --verify-tag \
+              "${prerelease[@]}"
+          fi
+
       # --- Fallback if Trusted Publishing is NOT yet enabled on your account ---
-      # Replace the two steps above (NuGet/login + push) with a scoped API key:
+      # Replace the NuGet/login + push steps above with a scoped API key:
       #   1. Create a key on nuget.org (Push, glob pattern: ClrVoyant*).
       #   2. Store it as repo secret NUGET_API_KEY.
       #   3. - name: Push to NuGet.org (API key)
+      #        env:
+      #          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
       #        run: >
-      #          dotnet nuget push "${{ runner.temp }}/nupkg/*.nupkg"
-      #          --api-key ${{ secrets.NUGET_API_KEY }}
+      #          dotnet nuget push "dist/*.nupkg"
+      #          --api-key "$NUGET_API_KEY"
       #          --source https://api.nuget.org/v3/index.json --skip-duplicate

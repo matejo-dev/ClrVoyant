@@ -1,8 +1,18 @@
 # End-to-end smoke for the new tools (content breakpoint, restart, clear, instructions).
+# -ServerPath: apphost or ClrVoyant.Server.dll (default: the built output for
+# -Configuration / -Framework). -SampleDll defaults to the SampleApp build for the
+# same configuration and framework.
+param(
+    [string]$ServerPath,
+    [string]$SampleDll,
+    [string]$Configuration = 'Debug',
+    [string]$Framework = 'net10.0'
+)
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
-$exe = Join-Path $root "src/ClrVoyant.Server/bin/Debug/net8.0/ClrVoyant.Server.exe"
-$dll = Join-Path $root "samples/SampleApp/bin/Debug/net8.0/SampleApp.dll"
+. (Join-Path $PSScriptRoot "smoke-common.ps1")
+$exe = Resolve-ServerPath -ServerPath $ServerPath -Configuration $Configuration -Framework $Framework
+$dll = if ($SampleDll) { $SampleDll } else { Join-Path $root "samples/SampleApp/bin/$Configuration/$Framework/SampleApp.dll" }
 $src = Join-Path $root "samples/SampleApp/Program.cs"
 $env:CLRVOYANT_NETCOREDBG = $null  # use the bundled engine
 

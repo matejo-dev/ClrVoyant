@@ -1,14 +1,15 @@
 # Reusable MCP stdio test driver for the ClrVoyant server.
 # Spawns the server, performs the JSON-RPC handshake, and exposes Call().
+# -ServerExe: apphost or ClrVoyant.Server.dll; defaults to the Debug build output
+# (see smoke-common.ps1).
 param([string]$ServerExe)
 
 $ErrorActionPreference = "Stop"
-$psi = New-Object System.Diagnostics.ProcessStartInfo
-$psi.FileName = $ServerExe
+. (Join-Path $PSScriptRoot "smoke-common.ps1")
+$psi = New-ServerStartInfo (Resolve-ServerPath -ServerPath $ServerExe)
 $psi.RedirectStandardInput = $true
 $psi.RedirectStandardOutput = $true
 $psi.RedirectStandardError = $true
-$psi.UseShellExecute = $false
 $script:proc = [System.Diagnostics.Process]::Start($psi)
 $script:si = $script:proc.StandardInput
 $script:so = $script:proc.StandardOutput

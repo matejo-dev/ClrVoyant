@@ -9,20 +9,17 @@
 #   - the APP image must ship its .pdb files (source lines + locals).
 #   - the app and sidecar must be the same architecture (x64 or arm64) and .NET 8+.
 #
+# BEFORE `kubectl apply`: create the auth Secret (this file deliberately does not
+# contain one, so applying it can never deploy a known token):
+#
+#   kubectl create secret generic clrvoyant-auth \
+#     --from-literal=token="$(openssl rand -hex 32)"
+#
 # SECURITY: this grants a remote, authenticated caller the ability to attach a
 # debugger, set breakpoints and EVALUATE code in the app process. Treat it as a
 # break-glass / non-prod capability. The bearer token is the only gate — rotate it by
-# updating this Secret and restarting the pod (it is read once at startup), and scope
+# replacing that Secret and restarting the pod (it is read once at startup), and scope
 # network access tightly (NetworkPolicy + port-forward only).
-apiVersion: v1
-kind: Secret
-metadata:
-  name: clrvoyant-auth
-type: Opaque
-stringData:
-  # Replace with a strong random secret (e.g. `openssl rand -hex 32`).
-  token: "CHANGE-ME-strong-random-token"
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -49,7 +46,11 @@ spec:
 
         # ---- the ClrVoyant sidecar ----
         - name: clrvoyant
-          image: your-registry/clrvoyant:latest          # built from deploy/Dockerfile
+          # Replace X.Y.Z with the exact version you built and pushed (see
+          # deploy/README.md). Never use :latest here: a mutable tag means the pod
+          # you debug with can silently change on the next pull, and this image can
+          # attach to and evaluate code in another container.
+          image: your-registry/clrvoyant:X.Y.Z          # built from deploy/Dockerfile
           ports:
             - name: mcp
               containerPort: 3001
@@ -57,10 +58,43 @@ spec:
             - name: CLRVOYANT_AUTH_TOKEN
               valueFrom:
                 secretKeyRef: { name: clrvoyant-auth, key: token }
+          resources:
+            # Heap inspection (list_tasks, get_variables, ...) reads the target's
+            # memory through ClrMD and is memory-hungry: size the limit to the app's
+            # heap, not to an idle sidecar. The values below are starting points,
+            # not measurements; an OOM-killed sidecar ends the debug session.
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { memory: 1Gi }
           securityContext:
+            allowPrivilegeEscalation: false
+            seccompProfile:
+              type: RuntimeDefault
             capabilities:
               add: ["SYS_PTRACE"]    # required: netcoredbg attach + ClrMD read
-            # readOnlyRootFilesystem could be enabled with a writable /tmp for dumps.
+          # ---- Hardening, UNTESTED --------------------------------------------
+          # The block below has NOT been validated against a real attach. Replace
+          # the securityContext above with it only in a test cluster first.
+          #   - runAsNonRoot: for a non-root user the added capability is not in
+          #     the effective set, so ptrace of a process owned by ANOTHER uid is
+          #     expected to fail. runAsUser/runAsGroup must therefore equal the uid
+          #     the app runs as (adjust 1000 below).
+          #   - readOnlyRootFilesystem needs a writable /tmp (emptyDir) and may
+          #     need more writable paths; verify with a real debug session.
+          #
+          # securityContext:
+          #   runAsNonRoot: true
+          #   runAsUser: 1000          # must match the app container's uid
+          #   runAsGroup: 1000
+          #   allowPrivilegeEscalation: false
+          #   readOnlyRootFilesystem: true
+          #   seccompProfile:
+          #     type: RuntimeDefault
+          #   capabilities:
+          #     drop: ["ALL"]
+          #     add: ["SYS_PTRACE"]
+          # volumeMounts:
+          #   - { name: tmp, mountPath: /tmp }
+          # (and under the pod spec:  volumes: [ { name: tmp, emptyDir: {} } ])
           readinessProbe:
             tcpSocket: { port: 3001 }
             initialDelaySeconds: 3
