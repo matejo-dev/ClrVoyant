@@ -36,7 +36,7 @@ internal static class TestPaths
 
     public static string SampleAppSrc => Path.Combine(RepoRoot, "samples", "SampleApp", "Program.cs");
 
-    // Windows-only target: its build exists only on Windows.
+    // Windows-only target: its build exists only on Windows, so it is resolved on access.
     public static string WinFormsAppDll => FindBuiltDll("WinFormsApp", "net8.0-windows");
     public static string WinFormsAppSrc => Path.Combine(RepoRoot, "samples", "WinFormsApp", "Program.cs");
 

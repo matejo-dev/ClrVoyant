@@ -25,10 +25,11 @@ The findings and the scripts in this folder do **not** use the same netcoredbg v
 
 - `linux/FINDINGS.md` records that its results were produced with **netcoredbg
   3.1.3-1** (linux-amd64), on an x64 container, on 2026-06-04.
-- `linux/run.sh` and `linux/run-server-smoke.sh` now pin **netcoredbg 3.2.0-1092**. The
-  scripts were bumped with the product's pin; the findings were **not** re-run with that
-  version. Whether the conclusions hold for it is therefore not established by the
-  spikes. The product's own test suite, which runs against its pinned engine on every
+- `linux/run.sh` and `linux/run-server-smoke.sh` pin **netcoredbg 3.1.3-1062**, the
+  product's Linux pin (the product is on 3.2.0-1092 on Windows only, because the 3.2.0
+  Linux builds need glibc 2.38; see `Directory.Build.props`). The findings were produced
+  with the 3.1.3-1 build; whether they hold for 3.1.3-1062 exactly is not established by
+  the spikes. The product's own test suite, which runs against its pinned engine on every
   CI leg, is the current evidence.
 - The Windows spike does not record which netcoredbg version it used.
 

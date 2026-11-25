@@ -77,3 +77,10 @@ The "wired up, pending hardware validation" wording above no longer applies:
 `linux-arm64` is validated by CI on every push to `main` and every pull request, and
 the release workflow runs the suite on x64 Linux before publishing. The QEMU spike
 remains non-authoritative.
+
+The assets above are not all one netcoredbg version: the pin is per OS in
+`Directory.Build.props` (Windows 3.2.0-1092, Linux 3.1.3-1062). The 3.2.0-1092 Linux builds
+need glibc 2.38 and do not start on Debian 12 or Ubuntu 22.04, which is the Linux floor the
+README states (glibc 2.34+, `GLIBCXX_3.4.30`), so Linux stays on 3.1.3-1062 until a release
+keeps that baseline. CI starts the Linux engine on the sidecar image's base and on Ubuntu
+22.04 to catch a bump that breaks it.

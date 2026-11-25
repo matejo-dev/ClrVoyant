@@ -13,8 +13,9 @@ the server output you also redistribute netcoredbg under its license, reproduced
 ## netcoredbg — MIT License
 
 - Project: https://github.com/Samsung/netcoredbg
-- Version: pinned in `Directory.Build.props` (the single source of truth) and consumed by
-  the server project; the release archive carries its own notices.
+- Version: pinned per platform in `Directory.Build.props` (`NetcoredbgVersionWindows` and
+  `NetcoredbgVersionLinux`, the single source of truth) and consumed by the server
+  project; the release archive carries its own notices.
 
 ```
 MIT License

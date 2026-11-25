@@ -38,7 +38,7 @@
     <ToolCommandName>clrvoyant</ToolCommandName>
     <PackageId>ClrVoyant</PackageId>
     <IsPackable>true</IsPackable>
-    <Version>0.2.0</Version>
+    <Version>0.2.1</Version>
     <Description>A local MCP server that lets an agent debug .NET 8/9/10 apps headlessly — breakpoints, stepping, variables, and full async Task introspection (the "Tasks window" via ClrMD).</Description>
     <PackageTags>mcp;debugger;dotnet;netcoredbg;clrmd;async;tasks</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
@@ -51,7 +51,8 @@
        (NetcoredbgFetcher, used when running as an installed tool with no bundled
        copy) knows exactly what to download for the current OS + architecture. -->
   <ItemGroup>
-    <AssemblyMetadata Include="NetcoredbgVersion" Value="$(NetcoredbgVersion)" />
+    <AssemblyMetadata Include="NetcoredbgVersionWindows" Value="$(NetcoredbgVersionWindows)" />
+    <AssemblyMetadata Include="NetcoredbgVersionLinux" Value="$(NetcoredbgVersionLinux)" />
     <AssemblyMetadata Include="NetcoredbgSha256Windows" Value="$(NetcoredbgSha256Windows)" />
     <AssemblyMetadata Include="NetcoredbgSha256Linux" Value="$(NetcoredbgSha256Linux)" />
     <AssemblyMetadata Include="NetcoredbgSha256LinuxArm64" Value="$(NetcoredbgSha256LinuxArm64)" />
@@ -97,37 +98,74 @@
   <!-- Publish/pack bundle the engine for EVERY supported RID under
        tools/netcoredbg/<rid>/, so the .NET global tool works offline on any
        supported host with no runtime download (NetcoredbgLocator picks the
-       matching <rid>). The non-host RIDs are downloaded here at publish time
-       (SHA-256 verified) using only built-in MSBuild tasks — no PowerShell/bash —
-       so it also runs inside the dotnet/sdk container image. This is build-time
-       network access (CI / the packager), never the end user's machine. -->
-  <Target Name="StageNetcoredbgRidsToPublish" AfterTargets="Publish">
+       matching <rid>). The engines are downloaded here at publish time (SHA-256
+       verified) using only built-in MSBuild tasks — no PowerShell/bash — so it also
+       runs inside the dotnet/sdk container image. This is build-time network access
+       (CI / the packager), never the end user's machine.
+       They are staged under obj/ and handed to the SDK as ResolvedFileToPublish
+       items, the list both the publish copy and the tool pack consume (SDK 8 packs
+       from the items, SDK 10 globs the publish dir they are copied to). Copying them
+       into the publish dir on the side instead only reached the package on SDKs
+       that glob, and only when the hook happened to run. -->
+  <Target Name="StageNetcoredbgRidsToPublish" AfterTargets="ComputeResolvedFilesToPublishList">
+    <PropertyGroup>
+      <_NetcoredbgRidsDir>$(BaseIntermediateOutputPath)netcoredbg-rids</_NetcoredbgRidsDir>
+    </PropertyGroup>
     <MSBuild Projects="$(MSBuildThisFileFullPath)" Targets="StageOneNetcoredbgRid"
-             Properties="StageRid=win-x64;StageAsset=netcoredbg-win64.zip;StageSha=$(NetcoredbgSha256Windows);StageExe=netcoredbg.exe;StageIsZip=true;StageDestRoot=$(PublishDir)tools/netcoredbg" />
+             Properties="StageRid=win-x64;StageVersion=$(NetcoredbgVersionWindows);StageAsset=netcoredbg-win64.zip;StageSha=$(NetcoredbgSha256Windows);StageExe=netcoredbg.exe;StageIsZip=true;StageDestRoot=$(_NetcoredbgRidsDir)" />
     <MSBuild Projects="$(MSBuildThisFileFullPath)" Targets="StageOneNetcoredbgRid"
-             Properties="StageRid=linux-x64;StageAsset=netcoredbg-linux-amd64.tar.gz;StageSha=$(NetcoredbgSha256Linux);StageExe=netcoredbg;StageIsZip=false;StageDestRoot=$(PublishDir)tools/netcoredbg" />
+             Properties="StageRid=linux-x64;StageVersion=$(NetcoredbgVersionLinux);StageAsset=netcoredbg-linux-amd64.tar.gz;StageSha=$(NetcoredbgSha256Linux);StageExe=netcoredbg;StageIsZip=false;StageDestRoot=$(_NetcoredbgRidsDir)" />
     <MSBuild Projects="$(MSBuildThisFileFullPath)" Targets="StageOneNetcoredbgRid"
-             Properties="StageRid=linux-arm64;StageAsset=netcoredbg-linux-arm64.tar.gz;StageSha=$(NetcoredbgSha256LinuxArm64);StageExe=netcoredbg;StageIsZip=false;StageDestRoot=$(PublishDir)tools/netcoredbg" />
-
-    <!-- Drop the single-RID flat copy that the build-output bundle leaves in publish:
-         the package ships the per-RID layout only (no redundant host-RID duplicate).
-         '*' matches top-level files but does not recurse into the <rid>/ subdirs. -->
+             Properties="StageRid=linux-arm64;StageVersion=$(NetcoredbgVersionLinux);StageAsset=netcoredbg-linux-arm64.tar.gz;StageSha=$(NetcoredbgSha256LinuxArm64);StageExe=netcoredbg;StageIsZip=false;StageDestRoot=$(_NetcoredbgRidsDir)" />
+    <!-- A publish dir is not cleaned between publishes and this subtree is ours: start
+         it fresh, so nothing from an older pin lingers next to the copied engines. -->
+    <RemoveDir Directories="$(PublishDir)tools/netcoredbg" />
     <ItemGroup>
-      <_FlatNetcoredbg Include="$(PublishDir)tools/netcoredbg/*" />
+      <_StagedNetcoredbg Include="$(_NetcoredbgRidsDir)/**/*" />
+      <ResolvedFileToPublish Include="@(_StagedNetcoredbg)"
+                             RelativePath="tools/netcoredbg/%(_StagedNetcoredbg.RecursiveDir)%(_StagedNetcoredbg.Filename)%(_StagedNetcoredbg.Extension)"
+                             CopyToPublishDirectory="PreserveNewest" />
     </ItemGroup>
-    <Delete Files="@(_FlatNetcoredbg)" />
+  </Target>
+
+  <!-- Fail closed on the ARTIFACT: a tool package must bundle the engine for every
+       supported RID. Checked by opening the produced .nupkg rather than by trusting
+       the pipeline, so an SDK whose publish/pack graph skips or bypasses the staging
+       above fails the pack instead of shipping a package that installs fine and
+       cannot find its engine. -->
+  <Target Name="VerifyNetcoredbgRidsInPackage" AfterTargets="Pack" Condition="'$(PackAsTool)' == 'true'">
+    <PropertyGroup>
+      <_NupkgVerifyDir>$(IntermediateOutputPath)nupkg-verify</_NupkgVerifyDir>
+    </PropertyGroup>
+    <ItemGroup>
+      <_PackedNupkg Include="@(NuGetPackOutput)" Condition="'%(Extension)' == '.nupkg'" />
+    </ItemGroup>
+    <RemoveDir Directories="$(_NupkgVerifyDir)" />
+    <Unzip SourceFiles="@(_PackedNupkg)" DestinationFolder="$(_NupkgVerifyDir)" />
+    <ItemGroup>
+      <_PackedEngineWinX64 Include="$(_NupkgVerifyDir)/tools/*/any/tools/netcoredbg/win-x64/netcoredbg.exe" />
+      <_PackedEngineLinuxX64 Include="$(_NupkgVerifyDir)/tools/*/any/tools/netcoredbg/linux-x64/netcoredbg" />
+      <_PackedEngineLinuxArm64 Include="$(_NupkgVerifyDir)/tools/*/any/tools/netcoredbg/linux-arm64/netcoredbg" />
+    </ItemGroup>
+    <PropertyGroup>
+      <_PackedEnginesComplete Condition="'@(_PackedEngineWinX64)' != '' And '@(_PackedEngineLinuxX64)' != '' And '@(_PackedEngineLinuxArm64)' != ''">true</_PackedEnginesComplete>
+    </PropertyGroup>
+    <RemoveDir Directories="$(_NupkgVerifyDir)" />
+    <Delete Condition="'$(_PackedEnginesComplete)' != 'true'" Files="@(_PackedNupkg)" />
+    <Error Condition="'$(_PackedEnginesComplete)' != 'true'"
+           Text="@(_PackedNupkg) did not bundle netcoredbg for every supported RID (win-x64, linux-x64, linux-arm64) under tools/netcoredbg/; the package was deleted." />
   </Target>
 
   <!-- Stage one RID's netcoredbg into $(StageDestRoot)/$(StageRid)/. Idempotent:
        skips entirely if the binary AND the marker for the pinned version are already
-       present, so a publish dir staged for an older pin is replaced, not reused.
+       present, so a folder staged for an older pin is replaced, not reused.
        Parametrized via the MSBuild task above so the download/verify/extract logic
        lives in exactly one place. -->
   <Target Name="StageOneNetcoredbgRid"
-          Condition="!Exists('$(StageDestRoot)/$(StageRid)/$(StageExe)') Or !Exists('$(StageDestRoot)/$(StageRid)/$(NetcoredbgStampName)')">
+          Condition="!Exists('$(StageDestRoot)/$(StageRid)/$(StageExe)') Or !Exists('$(StageDestRoot)/$(StageRid)/netcoredbg-$(StageVersion).stamp')">
     <PropertyGroup>
       <_StageTmp>$(IntermediateOutputPath)ncdbg-stage/$(StageRid)</_StageTmp>
-      <_StageUrl>https://github.com/Samsung/netcoredbg/releases/download/$(NetcoredbgVersion)/$(StageAsset)</_StageUrl>
+      <_StageUrl>https://github.com/Samsung/netcoredbg/releases/download/$(StageVersion)/$(StageAsset)</_StageUrl>
     </PropertyGroup>
     <RemoveDir Directories="$(_StageTmp)" />
     <MakeDir Directories="$(_StageTmp)" />
@@ -164,7 +202,7 @@
     <RemoveDir Directories="$(StageDestRoot)/$(StageRid)" />
     <Copy SourceFiles="@(_StageFiles)"
           DestinationFiles="@(_StageFiles->'$(StageDestRoot)/$(StageRid)/%(RecursiveDir)%(Filename)%(Extension)')" />
-    <Touch Files="$(StageDestRoot)/$(StageRid)/$(NetcoredbgStampName)" AlwaysCreate="true" />
+    <Touch Files="$(StageDestRoot)/$(StageRid)/netcoredbg-$(StageVersion).stamp" AlwaysCreate="true" />
     <RemoveDir Directories="$(_StageTmp)" />
   </Target>
 

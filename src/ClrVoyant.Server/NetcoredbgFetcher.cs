@@ -35,7 +35,10 @@ internal static class NetcoredbgFetcher
     internal static string EnsureInUserCache(Func<string, string?> env, Func<string, string?> meta,
         bool windows, Architecture arch, Action<Uri, string> download)
     {
-        string version = meta("NetcoredbgVersion") ?? throw new InvalidOperationException("netcoredbg version metadata missing.");
+        // The pin is per platform (see Directory.Build.props), so the version follows the
+        // RUNNING OS, not the OS the package was built on.
+        string version = meta(windows ? "NetcoredbgVersionWindows" : "NetcoredbgVersionLinux")
+            ?? throw new InvalidOperationException("netcoredbg version metadata missing.");
         var (asset, sha) = SelectAsset(windows, arch, meta);
         string exeName = windows ? "netcoredbg.exe" : "netcoredbg";
 

@@ -15,7 +15,10 @@ namespace ClrVoyant.Tests;
 /// </summary>
 public sealed class NetcoredbgFetcherTests : IDisposable
 {
-    const string Version = "9.9.9-test";
+    // Distinct per OS, like the real pins: a fetch that read the other OS's version would land in the
+    // wrong cache directory and download from the wrong release.
+    const string WindowsVersion = "9.9.9-win";
+    const string LinuxVersion = "9.9.9-linux";
 
     readonly string _root = Path.Combine(Path.GetTempPath(), $"clrvoyant-fetch-{Guid.NewGuid():N}");
     readonly string _cacheRoot;
@@ -35,7 +38,11 @@ public sealed class NetcoredbgFetcherTests : IDisposable
 
     // ---- fixtures ----
 
-    sealed record Platform(bool Windows, Architecture Arch, string Asset, string ExeName, string ShaKey);
+    sealed record Platform(bool Windows, Architecture Arch, string Asset, string ExeName, string ShaKey)
+    {
+        public string Version => Windows ? WindowsVersion : LinuxVersion;
+        public string VersionKey => Windows ? "NetcoredbgVersionWindows" : "NetcoredbgVersionLinux";
+    }
 
     public static IEnumerable<object[]> Platforms() =>
     [
@@ -108,18 +115,19 @@ public sealed class NetcoredbgFetcherTests : IDisposable
     }
 
     static Func<string, string?> Meta(Platform p, string sha) => key =>
-        key == "NetcoredbgVersion" ? Version : key == p.ShaKey ? sha : "unused-for-this-platform";
+        key == p.VersionKey ? p.Version : key == p.ShaKey ? sha : "unused-for-this-platform";
 
     string Ensure(Platform p, string sha, Action<Uri, string> download)
         => NetcoredbgFetcher.EnsureInUserCache(k => _env.GetValueOrDefault(k), Meta(p, sha), p.Windows, p.Arch, download);
 
-    string CacheDir => Path.Combine(_cacheRoot, "netcoredbg", Version);
+    string CacheDirOf(Platform p) => Path.Combine(_cacheRoot, "netcoredbg", p.Version);
 
-    static void WriteCompleteCache(string dir, string exeName, string content)
+    void WriteCompleteCache(Platform p, string content)
     {
+        string dir = CacheDirOf(p);
         Directory.CreateDirectory(dir);
-        File.WriteAllText(Path.Combine(dir, exeName), content);
-        File.WriteAllText(Path.Combine(dir, NetcoredbgFetcher.StampName(Version)), Version);
+        File.WriteAllText(Path.Combine(dir, p.ExeName), content);
+        File.WriteAllText(Path.Combine(dir, NetcoredbgFetcher.StampName(p.Version)), p.Version);
     }
 
     // ---- a correct download ----
@@ -134,15 +142,15 @@ public sealed class NetcoredbgFetcherTests : IDisposable
 
         string exe = Ensure(p, Sha(archive), source.Download);
 
-        Assert.Equal(Path.Combine(CacheDir, p.ExeName), exe);
+        Assert.Equal(Path.Combine(CacheDirOf(p), p.ExeName), exe);
         Assert.Equal("engine", File.ReadAllText(exe));
-        Assert.Equal("shim", File.ReadAllText(Path.Combine(CacheDir, "libdbgshim.so")));
-        Assert.Equal("managed", File.ReadAllText(Path.Combine(CacheDir, "sub", "ManagedPart.dll")));
-        Assert.True(File.Exists(Path.Combine(CacheDir, NetcoredbgFetcher.StampName(Version))));
+        Assert.Equal("shim", File.ReadAllText(Path.Combine(CacheDirOf(p), "libdbgshim.so")));
+        Assert.Equal("managed", File.ReadAllText(Path.Combine(CacheDirOf(p), "sub", "ManagedPart.dll")));
+        Assert.True(File.Exists(Path.Combine(CacheDirOf(p), NetcoredbgFetcher.StampName(p.Version))));
         // The pinned version and the right asset for the platform were asked for.
-        Assert.Equal(new Uri($"https://github.com/Samsung/netcoredbg/releases/download/{Version}/{p.Asset}"), Assert.Single(source.Downloads));
+        Assert.Equal(new Uri($"https://github.com/Samsung/netcoredbg/releases/download/{p.Version}/{p.Asset}"), Assert.Single(source.Downloads));
         // Nothing but the cache itself is left behind: the work directory is gone.
-        Assert.Equal([CacheDir], Directory.GetDirectories(Path.Combine(_cacheRoot, "netcoredbg")));
+        Assert.Equal([CacheDirOf(p)], Directory.GetDirectories(Path.Combine(_cacheRoot, "netcoredbg")));
     }
 
     [Fact]
@@ -153,7 +161,7 @@ public sealed class NetcoredbgFetcherTests : IDisposable
 
         Ensure(p, Sha(archive).ToUpperInvariant(), new Source(archive).Download);
 
-        Assert.True(File.Exists(Path.Combine(CacheDir, p.ExeName)));
+        Assert.True(File.Exists(Path.Combine(CacheDirOf(p), p.ExeName)));
     }
 
     [UnixFact]
@@ -182,7 +190,7 @@ public sealed class NetcoredbgFetcherTests : IDisposable
 
         Assert.Contains("checksum mismatch", ex.Message);
         Assert.Contains(Sha(archive), ex.Message);
-        Assert.False(Directory.Exists(CacheDir));
+        Assert.False(Directory.Exists(CacheDirOf(p)));
         // ...and not even the work directory.
         Assert.Empty(Directory.GetFileSystemEntries(Path.Combine(_cacheRoot, "netcoredbg")));
     }
@@ -192,13 +200,13 @@ public sealed class NetcoredbgFetcherTests : IDisposable
     {
         // Verification comes before anything in the cache is touched.
         var p = For(false, Architecture.X64);
-        Directory.CreateDirectory(CacheDir);
-        File.WriteAllText(Path.Combine(CacheDir, p.ExeName), "old");
+        Directory.CreateDirectory(CacheDirOf(p));
+        File.WriteAllText(Path.Combine(CacheDirOf(p), p.ExeName), "old");
         string archive = BuildArchive(p);
 
         Assert.Throws<InvalidOperationException>(() => Ensure(p, new string('0', 64), new Source(archive).Download));
 
-        Assert.Equal("old", File.ReadAllText(Path.Combine(CacheDir, p.ExeName)));
+        Assert.Equal("old", File.ReadAllText(Path.Combine(CacheDirOf(p), p.ExeName)));
     }
 
     [Fact]
@@ -210,7 +218,7 @@ public sealed class NetcoredbgFetcherTests : IDisposable
         var ex = Assert.Throws<InvalidOperationException>(() => Ensure(p, Sha(archive), new Source(archive).Download));
 
         Assert.Contains("not found inside", ex.Message);
-        Assert.False(Directory.Exists(CacheDir));
+        Assert.False(Directory.Exists(CacheDirOf(p)));
     }
 
     [Fact]
@@ -229,7 +237,7 @@ public sealed class NetcoredbgFetcherTests : IDisposable
     public void A_complete_cache_is_used_without_downloading()
     {
         var p = For(false, Architecture.X64);
-        WriteCompleteCache(CacheDir, p.ExeName, "cached");
+        WriteCompleteCache(p, "cached");
 
         string exe = Ensure(p, "unused", (_, _) => throw new InvalidOperationException("must not download"));
 
@@ -242,10 +250,10 @@ public sealed class NetcoredbgFetcherTests : IDisposable
     public void A_partial_cache_is_not_trusted_and_is_replaced(bool engine, bool stamp)
     {
         var p = For(false, Architecture.X64);
-        Directory.CreateDirectory(CacheDir);
-        if (engine) File.WriteAllText(Path.Combine(CacheDir, p.ExeName), "half-written");
-        if (stamp) File.WriteAllText(Path.Combine(CacheDir, NetcoredbgFetcher.StampName(Version)), Version);
-        File.WriteAllText(Path.Combine(CacheDir, "stale.bin"), "left by the interrupted run");
+        Directory.CreateDirectory(CacheDirOf(p));
+        if (engine) File.WriteAllText(Path.Combine(CacheDirOf(p), p.ExeName), "half-written");
+        if (stamp) File.WriteAllText(Path.Combine(CacheDirOf(p), NetcoredbgFetcher.StampName(p.Version)), p.Version);
+        File.WriteAllText(Path.Combine(CacheDirOf(p), "stale.bin"), "left by the interrupted run");
         string archive = BuildArchive(p);
         var source = new Source(archive);
 
@@ -253,8 +261,8 @@ public sealed class NetcoredbgFetcherTests : IDisposable
 
         Assert.Single(source.Downloads);
         Assert.Equal("engine", File.ReadAllText(exe));
-        Assert.False(File.Exists(Path.Combine(CacheDir, "stale.bin")), "the partial cache was merged into, not replaced");
-        Assert.True(File.Exists(Path.Combine(CacheDir, NetcoredbgFetcher.StampName(Version))));
+        Assert.False(File.Exists(Path.Combine(CacheDirOf(p), "stale.bin")), "the partial cache was merged into, not replaced");
+        Assert.True(File.Exists(Path.Combine(CacheDirOf(p), NetcoredbgFetcher.StampName(p.Version))));
     }
 
     [Fact]
@@ -269,7 +277,7 @@ public sealed class NetcoredbgFetcherTests : IDisposable
 
         string exe = Ensure(p, Sha(archive), new Source(archive).Download);
 
-        Assert.Equal(CacheDir, Path.GetDirectoryName(exe));
+        Assert.Equal(CacheDirOf(p), Path.GetDirectoryName(exe));
         Assert.Equal("old engine", File.ReadAllText(Path.Combine(other, p.ExeName))); // untouched
     }
 
@@ -279,12 +287,12 @@ public sealed class NetcoredbgFetcherTests : IDisposable
         var p = For(false, Architecture.X64);
         string archive = BuildArchive(p);
         // While this server downloads, another one finishes its own copy into the same place.
-        var source = new Source(archive) { DuringDownload = () => WriteCompleteCache(CacheDir, p.ExeName, "winner") };
+        var source = new Source(archive) { DuringDownload = () => WriteCompleteCache(p, "winner") };
 
         string exe = Ensure(p, Sha(archive), source.Download);
 
         Assert.Equal("winner", File.ReadAllText(exe));
-        Assert.Equal([CacheDir], Directory.GetDirectories(Path.Combine(_cacheRoot, "netcoredbg"))); // our work dir is gone
+        Assert.Equal([CacheDirOf(p)], Directory.GetDirectories(Path.Combine(_cacheRoot, "netcoredbg"))); // our work dir is gone
     }
 
     [Fact]
@@ -296,8 +304,8 @@ public sealed class NetcoredbgFetcherTests : IDisposable
         {
             DuringDownload = () =>
             {
-                Directory.CreateDirectory(CacheDir);
-                File.WriteAllText(Path.Combine(CacheDir, p.ExeName), "half");
+                Directory.CreateDirectory(CacheDirOf(p));
+                File.WriteAllText(Path.Combine(CacheDirOf(p), p.ExeName), "half");
             },
         };
 
@@ -334,8 +342,8 @@ public sealed class NetcoredbgFetcherTests : IDisposable
             () => Ensure(p, "unused", (_, _) => throw new InvalidOperationException("must not download")));
 
         Assert.Contains("CLRVOYANT_NO_FETCH", ex.Message);
-        Assert.Contains(CacheDir, ex.Message);
-        Assert.Contains(NetcoredbgFetcher.StampName(Version), ex.Message);
+        Assert.Contains(CacheDirOf(p), ex.Message);
+        Assert.Contains(NetcoredbgFetcher.StampName(p.Version), ex.Message);
     }
 
     [Fact]
@@ -343,7 +351,7 @@ public sealed class NetcoredbgFetcherTests : IDisposable
     {
         var p = For(false, Architecture.X64);
         _env["CLRVOYANT_NO_FETCH"] = "1";
-        WriteCompleteCache(CacheDir, p.ExeName, "cached");
+        WriteCompleteCache(p, "cached");
 
         Assert.Equal("cached", File.ReadAllText(Ensure(p, "unused", (_, _) => throw new InvalidOperationException())));
     }
@@ -399,10 +407,27 @@ public sealed class NetcoredbgFetcherTests : IDisposable
         var noVersion = Assert.Throws<InvalidOperationException>(() => NetcoredbgFetcher.EnsureInUserCache(
             k => _env.GetValueOrDefault(k), _ => null, p.Windows, p.Arch, (_, _) => { }));
         var noChecksum = Assert.Throws<InvalidOperationException>(() => NetcoredbgFetcher.EnsureInUserCache(
-            k => _env.GetValueOrDefault(k), k => k == "NetcoredbgVersion" ? Version : null, p.Windows, p.Arch, (_, _) => { }));
+            k => _env.GetValueOrDefault(k), k => k == p.VersionKey ? p.Version : null, p.Windows, p.Arch, (_, _) => { }));
 
         Assert.Contains("version", noVersion.Message);
         Assert.Contains("checksum", noChecksum.Message);
+    }
+
+    [Theory]
+    [MemberData(nameof(Platforms))]
+    public void The_version_is_the_running_OSs_pin_and_the_other_OSs_pin_is_never_used(bool windows, Architecture arch)
+    {
+        var p = For(windows, arch);
+        // Only the OTHER OS has a version in the metadata: this OS's is missing, so the fetch must
+        // fail rather than fall back to it (a package built on one OS still runs on the other).
+        string otherKey = windows ? "NetcoredbgVersionLinux" : "NetcoredbgVersionWindows";
+        var ex = Assert.Throws<InvalidOperationException>(() => NetcoredbgFetcher.EnsureInUserCache(
+            k => _env.GetValueOrDefault(k),
+            k => k == otherKey ? "0.0.0-other-os" : k == p.ShaKey ? "sha" : null,
+            p.Windows, p.Arch, (_, _) => throw new InvalidOperationException("must not download")));
+
+        Assert.Contains("version", ex.Message);
+        Assert.False(Directory.Exists(Path.Combine(_cacheRoot, "netcoredbg", "0.0.0-other-os")));
     }
 
     [Fact]

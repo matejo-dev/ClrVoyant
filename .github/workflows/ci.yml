@@ -80,6 +80,24 @@ jobs:
           # cannot find its runtime must fail here instead of being skipped.
           CLRVOYANT_REQUIRE_TARGET_RUNTIMES: '1'
 
+      # The runner's glibc/libstdc++ is newer than what we support, so the tests above
+      # cannot see a netcoredbg bump that raises the Linux baseline (3.2.0-1092 needs
+      # glibc 2.38 and does not start on Debian 12). Start the bundled engine on the
+      # oldest supported bases: the sidecar's runtime image (read from
+      # deploy/Dockerfile, so the check follows it) and Ubuntu 22.04 (README floor).
+      # Uses no third-party action; the engine is the one the build above fetched for
+      # this leg's OS and architecture.
+      - name: Linux engine starts on the oldest supported distros
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          runtime_image=$(sed -n 's/^FROM \([^ ]*\) AS runtime.*//p' deploy/Dockerfile)
+          test -n "$runtime_image"
+          for image in "$runtime_image" ubuntu:22.04; do
+            echo "== $image"
+            docker run --rm -v "$PWD/tools/netcoredbg:/ncdbg:ro" "$image" /ncdbg/netcoredbg --version
+          done
+
       # pwsh is preinstalled on all three runner images; the script prints a
       # Markdown coverage table to the job summary (no threshold gate).
       - name: Coverage summary

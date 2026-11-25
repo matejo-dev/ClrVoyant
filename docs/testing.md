@@ -107,6 +107,12 @@ installed `clrvoyant` over MCP/stdio with `CLRVOYANT_NO_FETCH=1`: the bundled pe
 engine works **offline**. CI runs it on each of its three legs, so each RID's bundle is
 validated on its own native platform.
 
+Two guards sit outside the test suite. Every `dotnet pack` opens the produced `.nupkg` and
+fails (deleting it) unless it bundles the engine for all three RIDs. And on the Linux legs
+CI starts the bundled engine on the oldest supported bases (the `deploy/Dockerfile` runtime
+image and Ubuntu 22.04): the runners' own glibc is newer, so a netcoredbg bump that raises
+the Linux baseline would otherwise pass.
+
 ## What CI runs
 
 [`ci.yml`](../.github/workflows/ci.yml), on pushes to `main` and on pull requests, in a
@@ -119,7 +125,10 @@ and `windows-latest`:
   collection (`coverlet.runsettings`, Cobertura) with TRX results;
 - writes a coverage table to the job summary and uploads the TRX and Cobertura files as
   an artefact (14 days). **There is no coverage threshold:** coverage is published, not
-  enforced.
+  enforced;
+- on the Linux legs, starts the bundled engine (`netcoredbg --version`) in containers of
+  the oldest supported bases: the runtime image named in `deploy/Dockerfile` and Ubuntu
+  22.04.
 
 [`codeql.yml`](../.github/workflows/codeql.yml) runs CodeQL for C#, and Dependabot
 updates the workflow actions, NuGet packages and the Docker base images

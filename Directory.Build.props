@@ -39,18 +39,21 @@
        TRUTH for the version/hashes; keep tools/fetch-netcoredbg.* and the spike
        scripts in sync with it. -->
   <PropertyGroup Label="netcoredbg">
-    <NetcoredbgVersion>3.2.0-1092</NetcoredbgVersion>
-    <!-- Per-OS/arch pinned SHA-256 of the upstream asset. Supported targets:
-         win-x64, linux-x64, linux-arm64 (netcoredbg ships no win-arm64; its osx-arm64
-         build is not a supported target, see ADR-0011). -->
+    <!-- The pin is per platform. NOTE: Windows is on 3.2.0-1092, which fixes stack
+         walks through managed-but-not-IL frames (Samsung/netcoredbg#215, GitHub issue
+         #1). Linux stays on 3.1.3-1062 because the 3.2.0-1092 Linux builds require
+         glibc 2.38 / GLIBCXX_3.4.32 (3.1.3-1062: glibc 2.34 / GLIBCXX_3.4.30), so they
+         do not start on Debian 12 (the aspnet:8.0 image of deploy/Dockerfile) or Ubuntu
+         22.04, where 3.1.3-1062 does. Move Linux forward only to a release that keeps
+         that baseline. -->
+    <NetcoredbgVersionWindows>3.2.0-1092</NetcoredbgVersionWindows>
+    <NetcoredbgVersionLinux>3.1.3-1062</NetcoredbgVersionLinux>
+    <!-- Per-OS/arch pinned SHA-256 of the upstream asset of the version above. Supported
+         targets: win-x64, linux-x64, linux-arm64 (netcoredbg ships no win-arm64; its
+         osx-arm64 build is not a supported target, see ADR-0011). -->
     <NetcoredbgSha256Windows>3c410a45fa502415203a94fcb88654af65bf8e3dac158a5527a722e7a6b9274a</NetcoredbgSha256Windows>
-    <NetcoredbgSha256Linux>080eb3b2d2152465f599d3b33d1ee6e747794e11cc0a3773ec689f5e5f2c5afa</NetcoredbgSha256Linux>
-    <NetcoredbgSha256LinuxArm64>065ff49badec8a695dbea2de6ab6a330c774a191e426a217ab8cc05250627ccb</NetcoredbgSha256LinuxArm64>
-    <!-- Marker written next to a fetched/staged engine. Its NAME carries the version, so
-         a cache populated for an older pin is detected as stale and refetched after a
-         bump (existence of the binary alone says nothing about its version). The fetch
-         scripts derive the same name from the version they are given. -->
-    <NetcoredbgStampName>netcoredbg-$(NetcoredbgVersion).stamp</NetcoredbgStampName>
+    <NetcoredbgSha256Linux>3814341c028c81ff7eea03ac316ad92e9ad7d705d2a00e3e3df269cdc241c763</NetcoredbgSha256Linux>
+    <NetcoredbgSha256LinuxArm64>fc9efb691a53932a7fac4b9f67af68ad0c2a4cbe59cb2c1a3c44c64959df2ba4</NetcoredbgSha256LinuxArm64>
     <RepoToolsDir>$(MSBuildThisFileDirectory)tools</RepoToolsDir>
     <NetcoredbgCacheDir>$(RepoToolsDir)\netcoredbg</NetcoredbgCacheDir>
     <!-- Architecture of the current build process. The build-time fetch bundles the
@@ -62,6 +65,15 @@
     <NetcoredbgSha256 Condition="$([MSBuild]::IsOSPlatform('Windows'))">$(NetcoredbgSha256Windows)</NetcoredbgSha256>
     <NetcoredbgSha256 Condition="!$([MSBuild]::IsOSPlatform('Windows')) And '$(NetcoredbgArch)' == 'Arm64'">$(NetcoredbgSha256LinuxArm64)</NetcoredbgSha256>
     <NetcoredbgSha256 Condition="!$([MSBuild]::IsOSPlatform('Windows')) And '$(NetcoredbgArch)' != 'Arm64'">$(NetcoredbgSha256Linux)</NetcoredbgSha256>
+    <!-- Version for the BUILD HOST's OS (the build-time cache); publish staging and the
+         runtime fetcher use the per-platform versions above. -->
+    <NetcoredbgVersion Condition="$([MSBuild]::IsOSPlatform('Windows'))">$(NetcoredbgVersionWindows)</NetcoredbgVersion>
+    <NetcoredbgVersion Condition="!$([MSBuild]::IsOSPlatform('Windows'))">$(NetcoredbgVersionLinux)</NetcoredbgVersion>
+    <!-- Marker written next to a fetched engine. Its NAME carries the version, so a
+         cache populated for an older pin is detected as stale and refetched after a
+         bump (existence of the binary alone says nothing about its version). The fetch
+         scripts and the publish staging derive the same name from their version. -->
+    <NetcoredbgStampName>netcoredbg-$(NetcoredbgVersion).stamp</NetcoredbgStampName>
   </PropertyGroup>
 
 </Project>

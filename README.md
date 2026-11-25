@@ -154,6 +154,9 @@ for the rest.
   such build) and no macOS (not validated). Each architecture has its own CI leg, the
   arm64 one on real hardware
   ([ADR-0011](https://github.com/matejo-dev/ClrVoyant/blob/main/docs/adr/0011-supported-architectures.md)).
+- **Linux distribution:** glibc 2.34+ and a GCC 12+ libstdc++ (`GLIBCXX_3.4.30`), the
+  bundled engine's baseline, for example Debian 12 or Ubuntu 22.04 and newer. Not Debian 11
+  or RHEL 9. CI starts the engine on the sidecar image's base and on Ubuntu 22.04.
 - A **PDB** next to each assembly you want breakpoints and locals in (see
   [limitations](#known-limitations)).
 
@@ -263,6 +266,11 @@ gets them from ClrMD. The price is focus: .NET only, headless.
 - `evaluate` runs code in the target: treat it as dangerous.
 - `pause` is best-effort: netcoredbg cannot always break into a freely running process,
   and it needs a thread known from an earlier stop.
+- **The bundled netcoredbg differs by OS:** 3.2.0-1092 on Windows, 3.1.3-1062 on Linux (the
+  3.2.0 Linux builds need glibc 2.38, so they do not start on Debian 12 or Ubuntu 22.04,
+  where 3.1.3 does). 3.1.3 fails a whole `get_callstack` when a frame on the stack is
+  managed but not IL: seen with WinForms on .NET 10, not observed on Linux so far. On a
+  glibc 2.38+ host you can point `CLRVOYANT_NETCOREDBG` at a 3.2.0+ netcoredbg.
 
 ## Tests
 
