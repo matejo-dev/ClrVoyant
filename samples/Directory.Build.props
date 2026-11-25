@@ -1,0 +1,14 @@
+<Project>
+
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" />
+
+  <!-- The samples are debug TARGETS: the integration tests set breakpoints in them by
+       their real source path. ContinuousIntegrationBuild (turned on for CI in the root
+       props, to make the published package reproducible) rewrites the source paths
+       recorded in the PDB to /_/..., and then no breakpoint given by file path binds.
+       Nothing here is packed or published, so keep real paths in every environment. -->
+  <PropertyGroup>
+    <ContinuousIntegrationBuild>false</ContinuousIntegrationBuild>
+  </PropertyGroup>
+
+</Project>
