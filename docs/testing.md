@@ -63,6 +63,12 @@ bundled per-RID engine works **offline**. Skipped unless the env var is set; CI 
 it on every leg (Windows / linux-x64 / linux-arm64), so each RID's bundle is
 validated on its own native platform.
 
+Two guards sit outside the test suite. Every `dotnet pack` opens the produced
+`.nupkg` and fails (deleting it) unless it bundles the engine for all three RIDs.
+And on the Linux legs CI starts the bundled engine on the oldest supported bases
+(the `deploy/Dockerfile` runtime image and Ubuntu 22.04): the runners' own glibc
+is newer, so a netcoredbg bump that raises the Linux baseline would otherwise pass.
+
 Run everything:
 ```pwsh
 dotnet test tests/ClrVoyant.Tests --settings coverlet.runsettings

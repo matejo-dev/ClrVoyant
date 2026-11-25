@@ -68,6 +68,9 @@ Concrete scenarios it delivers today (Windows or Linux, .NET 8/9/10):
   arm64 tool for an arm64 process. (No `win-arm64`: netcoredbg ships no such
   build. No macOS: not validated.) Each architecture is exercised by its own CI leg, including an
   `arm64` runner on real hardware — see [ADR-0011](docs/adr/0011-supported-architectures.md).
+- **Linux distribution**: glibc 2.34+ and a GCC 12+ libstdc++ (`GLIBCXX_3.4.30`),
+  the bundled engine's baseline — e.g. Debian 12, Ubuntu 22.04 or newer. Not Debian
+  11 or RHEL 9. CI starts the engine on Debian 12 (the sidecar image) and Ubuntu 22.04.
 - **.NET SDK 8 / 9 / 10** (the target apps you debug must be .NET 8+; .NET
   Framework is not supported)
 
