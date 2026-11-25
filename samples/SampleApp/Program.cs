@@ -20,6 +20,11 @@ await Task.Delay(200); // let the awaits park
 
 Console.WriteLine($"SampleApp PID={Process.GetCurrentProcess().Id}");
 
+// Test hook: when set, exit right away with this code, so tests can check that the
+// debugger reports the exit code and the stdout printed above.
+if (Environment.GetEnvironmentVariable("SAMPLE_EXIT_CODE") is { } exitCode)
+    return int.Parse(exitCode);
+
 int i = 0;
 while (true)
 {

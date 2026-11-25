@@ -36,8 +36,19 @@ public sealed record FunctionBreakpoint(
     int? Line);
 
 /// <summary>Result of a resume operation (continue / step): the resulting state
-/// and, when stopped, where.</summary>
-public sealed record StopOutcome(SessionState State, StopLocation? Stop);
+/// and, when stopped, where. When the process exited, <paramref name="ExitCode"/> is
+/// its exit code (null if the debugger did not report one).</summary>
+public sealed record StopOutcome(SessionState State, StopLocation? Stop, int? ExitCode = null);
+
+/// <summary>A chunk of debuggee output as reported by the debugger. <paramref name="Category"/>
+/// is the DAP output category (typically stdout or stderr; console for the debugger's
+/// own messages).</summary>
+public sealed record DebugOutput(string Category, string Text);
+
+/// <summary>The captured tail of a session's debuggee output (get_output).
+/// <paramref name="Truncated"/> is true when earlier output is not included, either
+/// dropped by the capture cap or cut by the requested limit.</summary>
+public sealed record SessionOutput(string Text, bool Truncated, SessionState State, int? ExitCode);
 
 /// <summary>A running OS process, for discovery before debug_attach (e.g. finding
 /// the app process inside a shared-PID-namespace POD).</summary>

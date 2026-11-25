@@ -16,12 +16,19 @@ public interface IDebugEngine : IAsyncDisposable
     SessionState State { get; }
 
     event Action<StopLocation>? Stopped;
-    event Action<int>? Exited;
+    /// <summary>Raised exactly once when the debuggee ends, with its exit code when the
+    /// debugger reported one.</summary>
+    event Action<int?>? Exited;
+    /// <summary>Debuggee (and debugger) output as it arrives.</summary>
+    event Action<DebugOutput>? Output;
 
     // --- Lifecycle ---
     Task LaunchAsync(LaunchRequest request, CancellationToken ct = default);
     Task AttachAsync(int pid, CancellationToken ct = default);
-    Task TerminateAsync(CancellationToken ct = default);
+    /// <summary>End the session. With <paramref name="terminateDebuggee"/> the debuggee
+    /// is killed; otherwise the debugger detaches and leaves it running. Bounded: it
+    /// returns promptly even if the debugger is dead or unresponsive.</summary>
+    Task TerminateAsync(bool terminateDebuggee, CancellationToken ct = default);
 
     // --- Breakpoints ---
     Task<IReadOnlyList<Breakpoint>> SetBreakpointsAsync(string file, IReadOnlyList<BreakpointRequest> breakpoints, CancellationToken ct = default);

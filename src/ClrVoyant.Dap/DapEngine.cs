@@ -15,38 +15,65 @@ public sealed class DapEngine : IDebugEngine
     readonly TaskCompletionSource<int> _processStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
     // Latest verified state per breakpoint id, updated by the async 'breakpoint' event.
     readonly System.Collections.Concurrent.ConcurrentDictionary<int, bool> _bpVerified = new();
+    // Completed (and replaced) on every 'breakpoint' event, so waiters wake on change.
+    TaskCompletionSource _bpChanged = new(TaskCreationOptions.RunContinuationsAsynchronously);
     int _pid;
     int _lastThreadId;
+    int _exitRaised;
+    volatile SessionState _state = SessionState.Starting;
 
     public int Pid => _pid;
-    public SessionState State { get; private set; } = SessionState.Starting;
+
+    // A dead adapter means a dead session: report Faulted rather than a stale
+    // Running/Stopped, unless the debuggee had already ended normally.
+    public SessionState State => _client.IsClosed && _state != SessionState.Exited ? SessionState.Faulted : _state;
 
     public event Action<StopLocation>? Stopped;
-    public event Action<int>? Exited;
+    public event Action<int?>? Exited;
+    public event Action<DebugOutput>? Output;
 
-    public DapEngine(string netcoredbgPath)
+    public DapEngine(string netcoredbgPath) : this(new DapClient(netcoredbgPath)) { }
+
+    /// <summary>Engine over an existing client (the seam in-process tests use). The
+    /// engine owns the client and disposes it.</summary>
+    public DapEngine(DapClient client)
     {
-        _client = new DapClient(netcoredbgPath);
+        _client = client;
         _client.ProcessStarted += pid => { _pid = pid; _processStarted.TrySetResult(pid); };
         _client.Stopped += body =>
         {
-            State = SessionState.Stopped;
+            _state = SessionState.Stopped;
             if (body.TryGetProperty("threadId", out var t)) _lastThreadId = t.GetInt32();
             Stopped?.Invoke(ToStopLocation(body));
         };
-        _client.ExitedEvent += _ =>
-        {
-            State = SessionState.Exited;
-            Exited?.Invoke(0);
-        };
+        // netcoredbg reports 'exited' (with the exit code) and then 'terminated' (without
+        // one). The session must hear about the end once, so whichever comes first raises
+        // Exited; the code is only known from 'exited', which precedes 'terminated'.
+        _client.ExitedEvent += body =>
+            OnEnded(body.ValueKind == JsonValueKind.Object
+                && body.TryGetProperty("exitCode", out var code)
+                && code.ValueKind == JsonValueKind.Number
+                && code.TryGetInt32(out int exitCode) ? exitCode : null);
+        _client.TerminatedEvent += _ => OnEnded(null);
+        _client.Output += (category, text) => Output?.Invoke(new DebugOutput(category, text));
         _client.BreakpointChanged += body =>
         {
             // DAP 'breakpoint' event body is { reason, breakpoint: { id, verified, ... } }.
             if (body.TryGetProperty("breakpoint", out var bp)
                 && bp.TryGetProperty("id", out var id)
                 && bp.TryGetProperty("verified", out var v))
+            {
                 _bpVerified[id.GetInt32()] = v.GetBoolean();
+                Interlocked.Exchange(ref _bpChanged, new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously))
+                    .TrySetResult();
+            }
         };
+    }
+
+    void OnEnded(int? exitCode)
+    {
+        _state = SessionState.Exited;
+        if (Interlocked.Exchange(ref _exitRaised, 1) == 0) Exited?.Invoke(exitCode);
     }
 
     static StopLocation ToStopLocation(JsonElement body)
@@ -65,37 +92,51 @@ public sealed class DapEngine : IDebugEngine
     {
         string program = Path.GetFullPath(request.Program);
         _client.Start();
-        await _client.RequestAsync("initialize", InitArgs());
+        await _client.RequestAsync("initialize", InitArgs(), ct);
         // The launch response may legitimately arrive only after configurationDone
         // (DAP ordering), so we don't await it inline — but we KEEP the task so a
         // rejection surfaces with netcoredbg's real message instead of being lost.
-        var launch = _client.RequestAsync("launch", new
+        var launchArgs = new Dictionary<string, object>
         {
-            request = "launch",
-            type = "coreclr",
-            program,
-            args = request.Args ?? Array.Empty<string>(),
-            cwd = request.Cwd ?? Path.GetDirectoryName(program),
-            stopAtEntry = request.StopAtEntry,
-            justMyCode = false,
-        });
+            ["request"] = "launch",
+            ["type"] = "coreclr",
+            ["program"] = program,
+            ["args"] = request.Args ?? Array.Empty<string>(),
+            ["cwd"] = request.Cwd ?? Path.GetDirectoryName(program)!,
+            ["stopAtEntry"] = request.StopAtEntry,
+            ["justMyCode"] = false,
+        };
+        // netcoredbg reads the debuggee environment from 'env' as a name -> value map; it
+        // is merged over the environment the debuggee inherits.
+        if (request.Env is { Count: > 0 } env) launchArgs["env"] = new Dictionary<string, string>(env);
+        // No request timeout: this response is bounded by ReadyTimeout below instead.
+        var launch = Observed(_client.RequestAsync("launch", launchArgs, ct, Timeout.InfiniteTimeSpan));
         await WaitReadyOrThrowAsync(launch, ct);
-        await _client.RequestAsync("configurationDone");
+        await _client.RequestAsync("configurationDone", null, ct);
         await ObserveStartAsync(launch, ct);
         await WaitProcessAsync(ct);
-        if (State == SessionState.Starting) State = SessionState.Running;
+        if (_state == SessionState.Starting) _state = SessionState.Running;
     }
 
     public async Task AttachAsync(int pid, CancellationToken ct = default)
     {
         _pid = pid;
         _client.Start();
-        await _client.RequestAsync("initialize", InitArgs());
-        var attach = _client.RequestAsync("attach", new { request = "attach", type = "coreclr", processId = pid });
+        await _client.RequestAsync("initialize", InitArgs(), ct);
+        var attach = Observed(_client.RequestAsync("attach", new { request = "attach", type = "coreclr", processId = pid },
+            ct, Timeout.InfiniteTimeSpan)); // bounded by ReadyTimeout, as for launch
         await WaitReadyOrThrowAsync(attach, ct);
-        await _client.RequestAsync("configurationDone");
+        await _client.RequestAsync("configurationDone", null, ct);
         await ObserveStartAsync(attach, ct);
-        if (State == SessionState.Starting) State = SessionState.Running;
+        if (_state == SessionState.Starting) _state = SessionState.Running;
+    }
+
+    // A launch/attach task is awaited only on the happy path; make sure a late failure
+    // (e.g. the connection closing while it is still pending) is never left unobserved.
+    static Task<JsonElement> Observed(Task<JsonElement> t)
+    {
+        _ = t.ContinueWith(static x => _ = x.Exception, TaskContinuationOptions.OnlyOnFaulted);
+        return t;
     }
 
     /// <summary>
@@ -111,14 +152,16 @@ public sealed class DapEngine : IDebugEngine
         var initialized = _client.WaitInitializedAsync();
         var timeout = Task.Delay(ReadyTimeout, ct);
         var first = await Task.WhenAny(initialized, launchOrAttach, timeout);
-        if (first == launchOrAttach && launchOrAttach.IsFaulted)
-            await launchOrAttach; // rethrows the DapException carrying netcoredbg's message
+        ct.ThrowIfCancellationRequested();
+        if (first != timeout && first.IsFaulted)
+            await first; // rethrows the DapException carrying netcoredbg's message, or the closed-connection error
         if (first == timeout)
             throw new TimeoutException($"netcoredbg did not become ready within {ReadyTimeout.TotalSeconds:0}s.");
         // Attach/launch may have answered (successfully) before 'initialized'; make
         // sure we still have the green light for configurationDone.
         if (!initialized.IsCompleted && await Task.WhenAny(initialized, timeout) == timeout)
             throw new TimeoutException($"netcoredbg did not become ready within {ReadyTimeout.TotalSeconds:0}s.");
+        await initialized;
     }
 
     /// <summary>
@@ -130,6 +173,7 @@ public sealed class DapEngine : IDebugEngine
     static async Task ObserveStartAsync(Task<JsonElement> launchOrAttach, CancellationToken ct)
     {
         var first = await Task.WhenAny(launchOrAttach, Task.Delay(ReadyTimeout, ct));
+        ct.ThrowIfCancellationRequested();
         if (first == launchOrAttach)
             await launchOrAttach; // rethrows if the start ultimately failed
         else
@@ -151,12 +195,18 @@ public sealed class DapEngine : IDebugEngine
     {
         // Resolve the target PID, but don't hang forever if no 'process' event.
         await Task.WhenAny(_processStarted.Task, Task.Delay(TimeSpan.FromSeconds(15), ct));
+        ct.ThrowIfCancellationRequested();
     }
 
-    public async Task TerminateAsync(CancellationToken ct = default)
+    // Bound for the disconnect round trip: it is answered quickly by a healthy adapter,
+    // and a session being torn down must never hang on a dead or wedged one.
+    static readonly TimeSpan DisconnectTimeout = TimeSpan.FromSeconds(5);
+
+    public async Task TerminateAsync(bool terminateDebuggee, CancellationToken ct = default)
     {
-        try { await _client.RequestAsync("disconnect", new { terminateDebuggee = true }); }
-        catch { /* engine may already be gone */ }
+        try { await _client.RequestAsync("disconnect", new { terminateDebuggee }, ct, DisconnectTimeout); }
+        catch { /* adapter already gone, wedged, or cancelled: the caller disposes the engine, which kills it */ }
+        _state = SessionState.Exited;
     }
 
     // --- Breakpoints ---
@@ -172,7 +222,7 @@ public sealed class DapEngine : IDebugEngine
             return d;
         }).ToArray();
 
-        var resp = await _client.RequestAsync("setBreakpoints", new { source = new { path }, breakpoints = bps });
+        var resp = await _client.RequestAsync("setBreakpoints", new { source = new { path }, breakpoints = bps }, ct);
         var result = new List<Breakpoint>();
         int i = 0;
         foreach (var e in resp.GetProperty("body").GetProperty("breakpoints").EnumerateArray())
@@ -180,25 +230,12 @@ public sealed class DapEngine : IDebugEngine
             int id = e.TryGetProperty("id", out var idEl) ? idEl.GetInt32() : 0;
             bool verified = e.TryGetProperty("verified", out var v) && v.GetBoolean();
             int line = e.TryGetProperty("line", out var ln) ? ln.GetInt32() : breakpoints[i].Line;
-            if (id != 0) _bpVerified[id] = verified;
+            if (id != 0) _bpVerified.AddOrUpdate(id, verified, (_, known) => known || verified);
             result.Add(new Breakpoint(id, verified, path, line));
             i++;
         }
 
-        // netcoredbg often returns verified=false and binds the breakpoint
-        // asynchronously via a 'breakpoint' event. Briefly wait for that flip so
-        // the reported state is accurate.
-        if (result.Any(b => !b.Verified && b.Id != 0))
-        {
-            var deadline = DateTime.UtcNow + TimeSpan.FromMilliseconds(600);
-            while (DateTime.UtcNow < deadline && result.Any(b => !b.Verified && b.Id != 0))
-            {
-                await Task.Delay(30, ct);
-                for (int k = 0; k < result.Count; k++)
-                    if (!result[k].Verified && result[k].Id != 0 && _bpVerified.TryGetValue(result[k].Id, out var nv) && nv)
-                        result[k] = result[k] with { Verified = true };
-            }
-        }
+        await ApplyLateVerificationAsync(result, b => b.Id, b => b.Verified, (b, v) => b with { Verified = v }, ct);
         return result;
     }
 
@@ -212,7 +249,7 @@ public sealed class DapEngine : IDebugEngine
             return d;
         }).ToArray();
 
-        var resp = await _client.RequestAsync("setFunctionBreakpoints", new { breakpoints = bps });
+        var resp = await _client.RequestAsync("setFunctionBreakpoints", new { breakpoints = bps }, ct);
         var result = new List<FunctionBreakpoint>();
         int i = 0;
         foreach (var e in resp.GetProperty("body").GetProperty("breakpoints").EnumerateArray())
@@ -222,40 +259,64 @@ public sealed class DapEngine : IDebugEngine
             string? file = e.TryGetProperty("source", out var src) && src.ValueKind == JsonValueKind.Object && src.TryGetProperty("path", out var p)
                 ? p.GetString() : null;
             int? line = e.TryGetProperty("line", out var ln) && ln.GetInt32() > 0 ? ln.GetInt32() : null;
-            if (id != 0) _bpVerified[id] = verified;
+            if (id != 0) _bpVerified.AddOrUpdate(id, verified, (_, known) => known || verified);
             result.Add(new FunctionBreakpoint(id, verified, breakpoints[i].FunctionName, file, line));
             i++;
         }
 
-        // Like source breakpoints, netcoredbg may verify asynchronously via a
-        // 'breakpoint' event; briefly wait for the flip so the reported state is accurate.
-        if (result.Any(b => !b.Verified && b.Id != 0))
-        {
-            var deadline = DateTime.UtcNow + TimeSpan.FromMilliseconds(600);
-            while (DateTime.UtcNow < deadline && result.Any(b => !b.Verified && b.Id != 0))
-            {
-                await Task.Delay(30, ct);
-                for (int k = 0; k < result.Count; k++)
-                    if (!result[k].Verified && result[k].Id != 0 && _bpVerified.TryGetValue(result[k].Id, out var nv) && nv)
-                        result[k] = result[k] with { Verified = true };
-            }
-        }
+        await ApplyLateVerificationAsync(result, b => b.Id, b => b.Verified, (b, v) => b with { Verified = v }, ct);
         return result;
     }
 
+    // How long to wait for netcoredbg to bind breakpoints it reported as unverified.
+    static readonly TimeSpan BreakpointBindTimeout = TimeSpan.FromMilliseconds(600);
+
+    /// <summary>
+    /// netcoredbg often answers setBreakpoints/setFunctionBreakpoints with
+    /// verified=false and binds asynchronously, announcing it in a 'breakpoint' event.
+    /// Wait (event-driven, bounded by <see cref="BreakpointBindTimeout"/>) for the flip so
+    /// the reported state is accurate, then fold it into <paramref name="items"/>.
+    /// </summary>
+    async Task ApplyLateVerificationAsync<T>(List<T> items, Func<T, int> idOf, Func<T, bool> verifiedOf,
+        Func<T, bool, T> withVerified, CancellationToken ct)
+    {
+        var pending = items.Where(i => !verifiedOf(i) && idOf(i) != 0).Select(idOf).ToList();
+        if (pending.Count == 0) return;
+
+        using var window = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        window.CancelAfter(BreakpointBindTimeout);
+        try
+        {
+            while (true)
+            {
+                // Take the signal BEFORE checking state, so an event in between is not missed.
+                var changed = Volatile.Read(ref _bpChanged).Task;
+                if (pending.All(IsVerified)) break;
+                await changed.WaitAsync(window.Token);
+            }
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested) { /* bind window over */ }
+
+        for (int k = 0; k < items.Count; k++)
+            if (!verifiedOf(items[k]) && IsVerified(idOf(items[k])))
+                items[k] = withVerified(items[k], true);
+    }
+
+    bool IsVerified(int id) => _bpVerified.TryGetValue(id, out var v) && v;
+
     public Task SetExceptionBreakpointsAsync(IReadOnlyList<string> filters, CancellationToken ct = default)
-        => _client.RequestAsync("setExceptionBreakpoints", new { filters = filters.ToArray() });
+        => _client.RequestAsync("setExceptionBreakpoints", new { filters = filters.ToArray() }, ct);
 
     // --- Execution control (send only) ---
     public Task ContinueAsync(int? threadId, CancellationToken ct = default)
     {
-        State = SessionState.Running;
-        return _client.RequestAsync("continue", new { threadId = threadId ?? _lastThreadId });
+        _state = SessionState.Running;
+        return _client.RequestAsync("continue", new { threadId = threadId ?? _lastThreadId }, ct);
     }
 
     public Task StepAsync(StepKind kind, int threadId, CancellationToken ct = default)
     {
-        State = SessionState.Running;
+        _state = SessionState.Running;
         string command = kind switch
         {
             StepKind.Over => "next",
@@ -263,7 +324,7 @@ public sealed class DapEngine : IDebugEngine
             StepKind.Out => "stepOut",
             _ => "next",
         };
-        return _client.RequestAsync(command, new { threadId });
+        return _client.RequestAsync(command, new { threadId }, ct);
     }
 
     public async Task PauseAsync(int? threadId, CancellationToken ct = default)
@@ -278,19 +339,19 @@ public sealed class DapEngine : IDebugEngine
                 var threads = await GetThreadsAsync(ct);
                 if (threads.Count > 0) tid = threads[0].Id;
             }
-            catch { /* threads may not be enumerable while running */ }
+            catch (Exception) when (!ct.IsCancellationRequested) { /* threads may not be enumerable while running */ }
         }
 
         // netcoredbg requires a threadId. If we still have none (it does not
         // enumerate threads of a freely-running process), this will fail with a
         // clear error — pause works once a thread is known from a prior stop.
-        await _client.RequestAsync("pause", new { threadId = tid });
+        await _client.RequestAsync("pause", new { threadId = tid }, ct);
     }
 
     // --- Introspection ---
     public async Task<IReadOnlyList<ThreadInfo>> GetThreadsAsync(CancellationToken ct = default)
     {
-        var resp = await _client.RequestAsync("threads");
+        var resp = await _client.RequestAsync("threads", null, ct);
         var list = new List<ThreadInfo>();
         foreach (var t in resp.GetProperty("body").GetProperty("threads").EnumerateArray())
             list.Add(new ThreadInfo(t.GetProperty("id").GetInt32(), t.TryGetProperty("name", out var n) ? n.GetString() ?? "" : ""));
@@ -299,7 +360,7 @@ public sealed class DapEngine : IDebugEngine
 
     public async Task<IReadOnlyList<StackFrame>> GetStackTraceAsync(int threadId, int startFrame, int levels, CancellationToken ct = default)
     {
-        var resp = await _client.RequestAsync("stackTrace", new { threadId, startFrame, levels });
+        var resp = await _client.RequestAsync("stackTrace", new { threadId, startFrame, levels }, ct);
         var list = new List<StackFrame>();
         foreach (var f in resp.GetProperty("body").GetProperty("stackFrames").EnumerateArray())
         {
@@ -313,7 +374,7 @@ public sealed class DapEngine : IDebugEngine
 
     public async Task<IReadOnlyList<Scope>> GetScopesAsync(int frameId, CancellationToken ct = default)
     {
-        var resp = await _client.RequestAsync("scopes", new { frameId });
+        var resp = await _client.RequestAsync("scopes", new { frameId }, ct);
         var list = new List<Scope>();
         foreach (var s in resp.GetProperty("body").GetProperty("scopes").EnumerateArray())
             list.Add(new Scope(s.GetProperty("name").GetString() ?? "?", s.GetProperty("variablesReference").GetInt32()));
@@ -322,7 +383,7 @@ public sealed class DapEngine : IDebugEngine
 
     public async Task<IReadOnlyList<Variable>> GetVariablesAsync(int variablesReference, CancellationToken ct = default)
     {
-        var resp = await _client.RequestAsync("variables", new { variablesReference });
+        var resp = await _client.RequestAsync("variables", new { variablesReference }, ct);
         var list = new List<Variable>();
         foreach (var v in resp.GetProperty("body").GetProperty("variables").EnumerateArray())
             list.Add(new Variable(
@@ -337,7 +398,7 @@ public sealed class DapEngine : IDebugEngine
     {
         var args = new Dictionary<string, object> { ["expression"] = expression, ["context"] = context ?? "repl" };
         if (frameId is int fid) args["frameId"] = fid;
-        var resp = await _client.RequestAsync("evaluate", args);
+        var resp = await _client.RequestAsync("evaluate", args, ct);
         var body = resp.GetProperty("body");
         return new EvaluateResult(
             body.TryGetProperty("result", out var r) ? r.GetString() ?? "" : "",
@@ -349,7 +410,7 @@ public sealed class DapEngine : IDebugEngine
     {
         try
         {
-            var resp = await _client.RequestAsync("exceptionInfo", new { threadId });
+            var resp = await _client.RequestAsync("exceptionInfo", new { threadId }, ct);
             var body = resp.GetProperty("body");
             string id = body.TryGetProperty("exceptionId", out var ei) ? ei.GetString() ?? "" : "";
             string desc = body.TryGetProperty("description", out var d) ? d.GetString() ?? "" : "";

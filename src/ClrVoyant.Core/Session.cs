@@ -28,12 +28,23 @@ public sealed class Session : IAsyncDisposable
     readonly Dictionary<int, FunctionBreakpoint> _fnResult = new();
     int _bpCounter;
 
+    // Debuggee output is kept as a bounded tail (oldest dropped) so a chatty or runaway
+    // process cannot grow the server without limit; get_output reads it.
+    const int OutputCapacityChars = 64 * 1024;
+    readonly BoundedTextTail _output = new(OutputCapacityChars);
+    int? _exitCode;
+
     public string Id { get; }
     public IDebugEngine Engine { get; private set; }
 
     /// <summary>The request used to launch this session, or null if it was created
     /// by attaching to an existing process. Only launched sessions can be restarted.</summary>
     public LaunchRequest? LaunchInfo { get; internal set; }
+
+    /// <summary>True when this server owns the debuggee's lifetime: it launched it
+    /// (debug_launch) or started the process that hosts it (debug_test). An attached
+    /// session leaves the process it merely attached to running when it ends.</summary>
+    public bool OwnsDebuggee => LaunchInfo is not null || OwnedResource is not null;
 
     /// <summary>An external resource whose lifetime is tied to this session and is
     /// disposed when the session ends (e.g. the <c>dotnet test</c> driver process
@@ -58,17 +69,31 @@ public sealed class Session : IAsyncDisposable
     {
         engine.Stopped += OnStopped;
         engine.Exited += OnExited;
+        engine.Output += OnOutput;
     }
 
     void Unsubscribe(IDebugEngine engine)
     {
         engine.Stopped -= OnStopped;
         engine.Exited -= OnExited;
+        engine.Output -= OnOutput;
     }
 
     public SessionState State => Engine.State;
     public int Pid => Engine.Pid;
-    public SessionInfo ToInfo() => new(Id, Pid, State, LastStop);
+    /// <summary>Exit code of the debuggee once it has exited and the debugger reported it.</summary>
+    public int? ExitCode { get { lock (_gate) return _exitCode; } }
+    public SessionInfo ToInfo() => new(Id, Pid, State, LastStop, ExitCode);
+
+    /// <summary>The last <paramref name="maxChars"/> characters of the debuggee's captured output.</summary>
+    public SessionOutput GetOutput(int maxChars)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxChars, 1);
+        // Read the flag first: output arriving in between can only make it more true.
+        bool dropped = _output.Dropped;
+        string text = _output.GetTail(maxChars);
+        return new SessionOutput(text, dropped || _output.Length > text.Length, State, ExitCode);
+    }
 
     void OnStopped(StopLocation loc)
     {
@@ -78,8 +103,15 @@ public sealed class Session : IAsyncDisposable
         else SpontaneousStop?.Invoke(this, loc);
     }
 
-    void OnExited(int code)
+    void OnOutput(DebugOutput o)
     {
+        // The debugger's own chatter (module loads, etc.) is not the debuggee's output.
+        if (o.Category is "stdout" or "stderr") _output.Append(o.Text);
+    }
+
+    void OnExited(int? code)
+    {
+        lock (_gate) { _exitCode = code; }
         var waiter = TakeWaiter();
         waiter?.TrySetResult(null); // null => exited
     }
@@ -107,7 +139,7 @@ public sealed class Session : IAsyncDisposable
 
         var loc = await tcs.Task;
         return loc is null
-            ? new StopOutcome(SessionState.Exited, null)
+            ? new StopOutcome(SessionState.Exited, null, ExitCode)
             : new StopOutcome(SessionState.Stopped, await EnrichAsync(loc, ct));
     }
 
@@ -302,7 +334,8 @@ public sealed class Session : IAsyncDisposable
     public async Task RestartAsync(LaunchRequest req, IDebugEngine newEngine, CancellationToken ct = default)
     {
         var old = Engine;
-        try { await old.TerminateAsync(ct); } catch { /* may already be gone */ }
+        // Restart only exists for launched sessions, whose debuggee this server owns.
+        try { await old.TerminateAsync(terminateDebuggee: true, ct); } catch { /* may already be gone */ }
         Unsubscribe(old);
         try { await old.DisposeAsync(); } catch { /* best effort */ }
 
@@ -310,7 +343,8 @@ public sealed class Session : IAsyncDisposable
         Subscribe(newEngine);
 
         // Invalidate any per-stop handles and abandon a pending waiter from the old run.
-        lock (_gate) { StopId++; LastStop = null; TakeWaiter()?.TrySetResult(null); }
+        lock (_gate) { StopId++; LastStop = null; _exitCode = null; TakeWaiter()?.TrySetResult(null); }
+        _output.Clear();
 
         await newEngine.LaunchAsync(req, ct);
         LaunchInfo = req;

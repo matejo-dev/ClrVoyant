@@ -21,6 +21,7 @@ public sealed class SessionManager : IAsyncDisposable
 
     public async Task<SessionInfo> LaunchAsync(LaunchRequest req, CancellationToken ct = default)
     {
+        ValidateEnv(req.Env);
         var session = CreateSession();
         session.LaunchInfo = req; // remember it so the session can be restarted
         await session.Engine.LaunchAsync(req, ct);
@@ -76,12 +77,26 @@ public sealed class SessionManager : IAsyncDisposable
     public IReadOnlyList<SessionInfo> List()
         => _sessions.Values.Select(s => s.ToInfo()).ToList();
 
-    public async Task StopAsync(string? sessionId, CancellationToken ct = default)
+    // An environment variable name must be non-empty and contain no '=', or the debugger
+    // would split it into a different name/value than the caller meant.
+    static void ValidateEnv(IReadOnlyDictionary<string, string>? env)
+    {
+        if (env is null) return;
+        foreach (var name in env.Keys)
+            if (name.Length == 0 || name.Contains('='))
+                throw new ArgumentException($"Invalid environment variable name '{name}': it must be non-empty and must not contain '='.");
+    }
+
+    /// <summary>End a session. By default the debuggee is killed only if this server
+    /// owns it (<see cref="Session.OwnsDebuggee"/>: launched, or the host behind
+    /// debug_test); a process the session merely attached to is detached and left
+    /// running. <paramref name="terminate"/> overrides that either way.</summary>
+    public async Task StopAsync(string? sessionId, bool? terminate = null, CancellationToken ct = default)
     {
         var s = Resolve(sessionId);
         _sessions.TryRemove(s.Id, out _);
         if (_activeId == s.Id) _activeId = _sessions.Keys.FirstOrDefault();
-        try { await s.Engine.TerminateAsync(ct); }
+        try { await s.Engine.TerminateAsync(terminate ?? s.OwnsDebuggee, ct); }
         finally { await s.DisposeAsync(); }
     }
 

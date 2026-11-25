@@ -26,7 +26,8 @@ public static class DebugTools
         the source with your own tools — ClrVoyant gives you the debugger primitives.
 
         TYPICAL LOOP
-        1. debug_launch(program=<path-to.dll>, args?, stopAtEntry?) — starts a session.
+        1. debug_launch(program=<path-to.dll>, args?, env?, stopAtEntry?) — starts a session.
+           env sets environment variables for the debuggee (ASPNETCORE_ENVIRONMENT, ...).
            (Or debug_attach(pid) for an already-running process; use list_processes
            to find its pid, e.g. the app process in a shared-PID-namespace POD.)
         2. set_breakpoint(file, content=<source text of the line>) — prefer 'content'
@@ -42,8 +43,12 @@ public static class DebugTools
            evaluate for plain inspection — evaluate EXECUTES code in the target.
         5. For async: list_tasks / get_async_graph / get_async_callstack — the unique
            feature; see ALL in-flight Tasks and their await/continuation chains.
-        6. restart_debugging() to rerun with the same breakpoints; clear_all_breakpoints
-           to reset. debug_stop when done.
+        6. restart_debugging() to rerun with the same breakpoints (and env); clear_all_breakpoints
+           to reset. debug_stop when done: it kills a process you launched, but only
+           detaches from one you attached to (the process keeps running).
+        7. The debuggee's stdout/stderr and exit code: get_output() returns the captured
+           tail; the exit code is also in the result of continue/step when the process
+           exits, and in debug_status. Read these first when debugging a crash.
 
         MULTI-SESSION: every session-scoped tool takes an optional sessionId; omit it to
         target the active (most-recently-stopped) session. When several processes run
@@ -62,14 +67,15 @@ public static class DebugTools
         """;
 
     [McpServerTool(Name = "debug_launch")]
-    [Description("Launch a built .NET (.dll) under the debugger and start a new debug session. Build the project first; pass the path to the output assembly. Returns the new session's id, pid and state.")]
+    [Description("Launch a built .NET (.dll) under the debugger and start a new debug session. Build the project first; pass the path to the output assembly. Optionally set environment variables for the debuggee with 'env'. Returns the new session's id, pid and state.")]
     public static Task<SessionInfo> DebugLaunch(
         SessionManager sessions,
         [Description("Full path to the built .dll to launch.")] string program,
         [Description("Command-line arguments for the program.")] string[]? args = null,
         [Description("Working directory; defaults to the program's folder.")] string? cwd = null,
-        [Description("Break at program entry instead of running freely.")] bool stopAtEntry = false)
-        => sessions.LaunchAsync(new LaunchRequest(program, args, cwd, stopAtEntry));
+        [Description("Break at program entry instead of running freely.")] bool stopAtEntry = false,
+        [Description("Environment variables to set for the debuggee, as a name -> value map (e.g. {\"ASPNETCORE_ENVIRONMENT\": \"Development\"}). Added to, and overriding, the environment inherited from the server. Kept across restart_debugging.")] Dictionary<string, string>? env = null)
+        => sessions.LaunchAsync(new LaunchRequest(program, args, cwd, stopAtEntry, env));
 
     [McpServerTool(Name = "debug_attach")]
     [Description("Attach the debugger to an already-running .NET process by PID, creating a new debug session. Use this for secondary/child processes you discover.")]
@@ -121,14 +127,23 @@ public static class DebugTools
         => sessions.Resolve(sessionId).ToInfo();
 
     [McpServerTool(Name = "debug_stop")]
-    [Description("Terminate the debuggee and end the session.")]
+    [Description("End the debug session. By default the debuggee is KILLED if this server started it (debug_launch, or the test host behind debug_test), but only DETACHED from — left running — if the session was created by debug_attach (including processes found by auto-attach). Pass 'terminate' to force either: true kills the process even if you only attached to it; false detaches and leaves it running (for a debug_test session the 'dotnet test' run is always ended with the session, so false cannot keep it alive; for a debug_launch session, a process whose console output goes through the debugger may fail when it next writes). Returns 'stopped'.")]
     public static async Task<string> DebugStop(
         SessionManager sessions,
-        [Description("Session id; omit for the active session.")] string? sessionId = null)
+        [Description("Session id; omit for the active session.")] string? sessionId = null,
+        [Description("true = kill the debuggee; false = detach and leave it running; omit for the default described above.")] bool? terminate = null)
     {
-        await sessions.StopAsync(sessionId);
+        await sessions.StopAsync(sessionId, terminate);
         return "stopped";
     }
+
+    [McpServerTool(Name = "get_output")]
+    [Description("Get the captured stdout/stderr of the debuggee (the most recent part, oldest dropped past a fixed cap), plus the session state and the exit code if it has exited. Use it to see what a crashed or finished process printed. Works in any state; output of a debug_attach'ed process is captured only if the debugger relays it.")]
+    public static SessionOutput GetOutput(
+        SessionManager sessions,
+        [Description("Session id; omit for the active session.")] string? sessionId = null,
+        [Description("Maximum number of characters to return (the most recent ones).")] int maxChars = 10000)
+        => sessions.Resolve(sessionId).GetOutput(maxChars);
 
     [McpServerTool(Name = "restart_debugging")]
     [Description("Restart a launched session in place: terminate the debuggee and relaunch it with the SAME program/args, keeping the same session id and all breakpoints. Only works for sessions started with debug_launch (not debug_attach). Returns the restarted session's info.")]

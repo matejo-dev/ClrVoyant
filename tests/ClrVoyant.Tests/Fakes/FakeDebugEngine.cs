@@ -13,13 +13,17 @@ public sealed class FakeDebugEngine : IDebugEngine
     public SessionState State { get; set; } = SessionState.Starting;
 
     public event Action<StopLocation>? Stopped;
-    public event Action<int>? Exited;
+    public event Action<int?>? Exited;
+    public event Action<DebugOutput>? Output;
 
     // Recorded calls.
     public int ContinueCalls { get; private set; }
     public List<StepKind> Steps { get; } = new();
     public int PauseCalls { get; private set; }
     public int TerminateCalls { get; private set; }
+    /// <summary>The terminateDebuggee flag of the last TerminateAsync call (null if never called).</summary>
+    public bool? LastTerminateDebuggee { get; private set; }
+    public LaunchRequest? LastLaunch { get; private set; }
     public List<string> ExceptionFilters { get; private set; } = new();
     public List<(string file, IReadOnlyList<BreakpointRequest> bps)> SetBreakpointCalls { get; } = new();
 
@@ -31,10 +35,12 @@ public sealed class FakeDebugEngine : IDebugEngine
     public StackFrame TopFrame { get; set; } = new(0, "Foo", "Enriched.cs", 42);
 
     public void RaiseStopped(StopLocation loc) { State = SessionState.Stopped; Stopped?.Invoke(loc); }
-    public void RaiseExited(int code) { State = SessionState.Exited; Exited?.Invoke(code); }
+    public void RaiseOutput(string category, string text) => Output?.Invoke(new DebugOutput(category, text));
+    public void RaiseExited(int? code) { State = SessionState.Exited; Exited?.Invoke(code); }
 
     public Task LaunchAsync(LaunchRequest request, CancellationToken ct = default)
     {
+        LastLaunch = request;
         State = SessionState.Running;
         return Task.CompletedTask;
     }
@@ -46,9 +52,10 @@ public sealed class FakeDebugEngine : IDebugEngine
         return Task.CompletedTask;
     }
 
-    public Task TerminateAsync(CancellationToken ct = default)
+    public Task TerminateAsync(bool terminateDebuggee, CancellationToken ct = default)
     {
         TerminateCalls++;
+        LastTerminateDebuggee = terminateDebuggee;
         State = SessionState.Exited;
         return Task.CompletedTask;
     }
