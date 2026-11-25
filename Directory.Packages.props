@@ -8,6 +8,10 @@
   </PropertyGroup>
 
   <ItemGroup Label="Product">
+    <!-- Evaluated 4.2.751201 on 2026-11-25 and stayed on 3.x: the suite is green on 4.x (Windows and Linux), but 4.x
+         ships Azure.Identity, Azure.Core, MSAL and Microsoft.Security.AntiSSRF (about +1 MB nupkg, 8 extra DLLs; Azure.Core and
+         AntiSSRF are loaded on the live-attach path) for symbol-server features this tool does not use, and no 4.x fix addresses a
+         defect seen here. Revisit if a target runtime (e.g. .NET 11) needs the newer heap/DAC support. -->
     <PackageVersion Include="Microsoft.Diagnostics.Runtime" Version="3.1.512801" />
     <PackageVersion Include="ModelContextProtocol" Version="2.4.0" />
     <PackageVersion Include="ModelContextProtocol.AspNetCore" Version="2.4.0" />
