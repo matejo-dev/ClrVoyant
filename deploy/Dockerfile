@@ -8,7 +8,7 @@
 # Build from the repository root:  docker build -f deploy/Dockerfile -t clrvoyant .
 
 # ---- build ----
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+FROM mcr.microsoft.com/dotnet/sdk:11.0 AS build
 WORKDIR /src
 
 # Restore in its own layer: only the files that determine the package graph are
