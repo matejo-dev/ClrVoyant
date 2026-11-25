@@ -1,0 +1,23 @@
+name: Feature request
+description: Suggest a new capability or a change in behaviour
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do
+      description: The debugging situation you are in and where ClrVoyant falls short. A concrete example helps more than a general wish.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like
+      description: A new tool, a parameter, a different result. If you have the shape in mind, sketch it.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you do today instead
+      description: The workaround, if there is one.
