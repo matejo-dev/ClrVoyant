@@ -20,7 +20,7 @@ public static class BreakpointTools
         [Description("Optional condition expression; breaks only when true.")] string? condition = null,
         [Description("Optional hit condition, e.g. '>=3'.")] string? hitCondition = null,
         [Description("Optional log message (logpoint); logs instead of breaking.")] string? logMessage = null,
-        string? sessionId = null,
+        [Description("Session id; omit for the active session.")] string? sessionId = null,
         CancellationToken cancellationToken = default)
         => sessions.Resolve(sessionId).AddSourceBreakpointAsync(
             file, new BreakpointRequest(line, condition, hitCondition, logMessage), content, cancellationToken);
@@ -32,14 +32,14 @@ public static class BreakpointTools
         [Description("Method to break on: 'Method', 'Type.Method', or 'Namespace.Type.Method'.")] string functionName,
         [Description("Optional condition expression; breaks only when true.")] string? condition = null,
         [Description("Optional hit condition, e.g. '>=3'.")] string? hitCondition = null,
-        string? sessionId = null,
+        [Description("Session id; omit for the active session.")] string? sessionId = null,
         CancellationToken cancellationToken = default)
         => sessions.Resolve(sessionId).AddFunctionBreakpointAsync(new FunctionBreakpointRequest(functionName, condition, hitCondition), cancellationToken);
 
     [McpServerTool(Name = "list_function_breakpoints", Title = "List function breakpoints", ReadOnly = true, OpenWorld = false)]
     [Description("List all function (method-name) breakpoints in the session with their verified state and resolved file/line.")]
     public static Task<IReadOnlyList<FunctionBreakpoint>> ListFunctionBreakpoints(
-        SessionManager sessions, string? sessionId = null, CancellationToken cancellationToken = default)
+        SessionManager sessions, [Description("Session id; omit for the active session.")] string? sessionId = null, CancellationToken cancellationToken = default)
         => sessions.Resolve(sessionId).ListFunctionBreakpointsAsync(cancellationToken);
 
     [McpServerTool(Name = "remove_breakpoint", Title = "Remove a breakpoint", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
@@ -47,20 +47,20 @@ public static class BreakpointTools
     public static Task<bool> RemoveBreakpoint(
         SessionManager sessions,
         [Description("Breakpoint id returned by set_breakpoint.")] int bpId,
-        string? sessionId = null,
+        [Description("Session id; omit for the active session.")] string? sessionId = null,
         CancellationToken cancellationToken = default)
         => sessions.Resolve(sessionId).RemoveBreakpointAsync(bpId, cancellationToken);
 
     [McpServerTool(Name = "list_breakpoints", Title = "List source breakpoints", ReadOnly = true, OpenWorld = false)]
     [Description("List all breakpoints in the session with their verified state and line.")]
     public static Task<IReadOnlyList<Breakpoint>> ListBreakpoints(
-        SessionManager sessions, string? sessionId = null, CancellationToken cancellationToken = default)
+        SessionManager sessions, [Description("Session id; omit for the active session.")] string? sessionId = null, CancellationToken cancellationToken = default)
         => sessions.Resolve(sessionId).ListBreakpointsAsync(cancellationToken);
 
     [McpServerTool(Name = "clear_all_breakpoints", Title = "Remove every breakpoint", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Remove every breakpoint in the session — all source breakpoints across all files AND all function breakpoints — in one call. Returns how many were cleared.")]
     public static async Task<string> ClearAllBreakpoints(
-        SessionManager sessions, string? sessionId = null, CancellationToken cancellationToken = default)
+        SessionManager sessions, [Description("Session id; omit for the active session.")] string? sessionId = null, CancellationToken cancellationToken = default)
     {
         int n = await sessions.Resolve(sessionId).ClearBreakpointsAsync(cancellationToken);
         return $"cleared {n} breakpoint(s)";
@@ -71,7 +71,7 @@ public static class BreakpointTools
     public static async Task<string> SetExceptionBreakpoints(
         SessionManager sessions,
         [Description("Exception filter ids, e.g. ['user-unhandled'].")] string[] filters,
-        string? sessionId = null,
+        [Description("Session id; omit for the active session.")] string? sessionId = null,
         CancellationToken cancellationToken = default)
     {
         await sessions.Resolve(sessionId).SetExceptionBreakpointsAsync(filters, cancellationToken);

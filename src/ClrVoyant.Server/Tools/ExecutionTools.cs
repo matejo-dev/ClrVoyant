@@ -18,29 +18,29 @@ public static class ExecutionTools
         SessionManager sessions,
         [Description("Thread to resume; omit for the last stopped thread.")] int? threadId = null,
         [Description("Max time to wait for the next stop, milliseconds.")] int timeoutMs = 30000,
-        string? sessionId = null,
+        [Description("Session id; omit for the active session.")] string? sessionId = null,
         CancellationToken cancellationToken = default)
         => sessions.Resolve(sessionId).ContinueAsync(threadId, TimeSpan.FromMilliseconds(timeoutMs), cancellationToken);
 
     [McpServerTool(Name = "step_over", Title = "Step over", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Step over the current line (run called methods without stepping in) and block until stopped. Returns the new location.")]
-    public static Task<StopOutcome> StepOver(SessionManager sessions, int? threadId = null, int timeoutMs = 30000, string? sessionId = null, CancellationToken cancellationToken = default)
+    public static Task<StopOutcome> StepOver(SessionManager sessions, [Description("Thread to step; omit for the thread of the last stop (required if the session has not stopped yet).")] int? threadId = null, [Description("Max time to wait for the next stop, milliseconds.")] int timeoutMs = 30000, [Description("Session id; omit for the active session.")] string? sessionId = null, CancellationToken cancellationToken = default)
         => sessions.Resolve(sessionId).StepAsync(StepKind.Over, threadId, TimeSpan.FromMilliseconds(timeoutMs), cancellationToken);
 
     [McpServerTool(Name = "step_into", Title = "Step into", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Step into the call on the current line and block until stopped. Returns the new location.")]
-    public static Task<StopOutcome> StepInto(SessionManager sessions, int? threadId = null, int timeoutMs = 30000, string? sessionId = null, CancellationToken cancellationToken = default)
+    public static Task<StopOutcome> StepInto(SessionManager sessions, [Description("Thread to step; omit for the thread of the last stop (required if the session has not stopped yet).")] int? threadId = null, [Description("Max time to wait for the next stop, milliseconds.")] int timeoutMs = 30000, [Description("Session id; omit for the active session.")] string? sessionId = null, CancellationToken cancellationToken = default)
         => sessions.Resolve(sessionId).StepAsync(StepKind.Into, threadId, TimeSpan.FromMilliseconds(timeoutMs), cancellationToken);
 
     [McpServerTool(Name = "step_out", Title = "Step out", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Step out of the current method and block until stopped. Returns the new location.")]
-    public static Task<StopOutcome> StepOut(SessionManager sessions, int? threadId = null, int timeoutMs = 30000, string? sessionId = null, CancellationToken cancellationToken = default)
+    public static Task<StopOutcome> StepOut(SessionManager sessions, [Description("Thread to step; omit for the thread of the last stop (required if the session has not stopped yet).")] int? threadId = null, [Description("Max time to wait for the next stop, milliseconds.")] int timeoutMs = 30000, [Description("Session id; omit for the active session.")] string? sessionId = null, CancellationToken cancellationToken = default)
         => sessions.Resolve(sessionId).StepAsync(StepKind.Out, threadId, TimeSpan.FromMilliseconds(timeoutMs), cancellationToken);
 
     [McpServerTool(Name = "pause", Title = "Pause a running target", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Break into a running target at its current point of execution.")]
     public static async Task<string> Pause(
-        SessionManager sessions, int? threadId = null, string? sessionId = null, CancellationToken cancellationToken = default)
+        SessionManager sessions, [Description("Thread to pause; omit to use the thread of an earlier stop (netcoredbg needs a thread it already knows).")] int? threadId = null, [Description("Session id; omit for the active session.")] string? sessionId = null, CancellationToken cancellationToken = default)
     {
         await sessions.Resolve(sessionId).PauseAsync(threadId, cancellationToken);
         return "pausing";

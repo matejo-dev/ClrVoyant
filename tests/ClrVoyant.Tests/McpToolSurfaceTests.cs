@@ -124,6 +124,23 @@ public class McpToolSurfaceTests
         Assert.All(tools!, t => Assert.DoesNotContain("cancellationToken", t.JsonSchema.GetRawText(), StringComparison.OrdinalIgnoreCase));
     }
 
+    [Fact]
+    public async Task Every_tool_parameter_a_client_sees_has_a_description()
+    {
+        IList<McpClientTool>? tools = null;
+        await McpInMemory.RunRealAsync(new FakeEngineFactory(), async run =>
+            tools = await run.Client.ListToolsAsync(cancellationToken: run.Ct));
+
+        var undescribed = new List<string>();
+        foreach (var t in tools!)
+            if (t.JsonSchema.TryGetProperty("properties", out var props))
+                foreach (var p in props.EnumerateObject())
+                    if (!p.Value.TryGetProperty("description", out var d) || string.IsNullOrWhiteSpace(d.GetString()))
+                        undescribed.Add($"{t.Name}.{p.Name}");
+
+        Assert.Empty(undescribed);
+    }
+
     // A tool that awaits must be cancellable by the client. Whether each one passes its token on is
     // covered for `continue` (ToolCancellationTests); this keeps a new async tool from forgetting it.
     [Fact]

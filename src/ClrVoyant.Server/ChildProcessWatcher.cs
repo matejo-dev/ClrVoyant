@@ -5,7 +5,7 @@ using Microsoft.Extensions.Logging;
 namespace ClrVoyant.Server;
 
 /// <summary>
-/// Phase 7, tier 2: when auto-attach is enabled, periodically discovers .NET
+/// Child-process auto-attach: when it is enabled (<see cref="AutoAttachOptions"/>), periodically discovers .NET
 /// processes spawned by an already-debugged process (matched by parent PID) and
 /// attaches them as new sessions. No suspend-at-startup, so the very first
 /// instants of a child's startup may run before we attach (documented tradeoff).

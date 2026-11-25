@@ -12,7 +12,7 @@ public static class InspectionTools
     [McpServerTool(Name = "get_threads", Title = "List threads", ReadOnly = true, OpenWorld = false)]
     [Description("List the threads of a stopped target.")]
     public static Task<IReadOnlyList<ThreadInfo>> GetThreads(
-        SessionManager sessions, string? sessionId = null, CancellationToken cancellationToken = default)
+        SessionManager sessions, [Description("Session id; omit for the active session.")] string? sessionId = null, CancellationToken cancellationToken = default)
         => sessions.Resolve(sessionId).GetThreadsAsync(cancellationToken);
 
     [McpServerTool(Name = "get_callstack", Title = "Get a thread's call stack", ReadOnly = true, OpenWorld = false)]
@@ -20,9 +20,9 @@ public static class InspectionTools
     public static Task<IReadOnlyList<StackFrame>> GetCallstack(
         SessionManager sessions,
         [Description("Thread id; omit for the last stopped thread.")] int? threadId = null,
-        int startFrame = 0,
-        int levels = 20,
-        string? sessionId = null,
+        [Description("Index of the first frame to return (0 = innermost).")] int startFrame = 0,
+        [Description("Maximum number of frames to return.")] int levels = 20,
+        [Description("Session id; omit for the active session.")] string? sessionId = null,
         CancellationToken cancellationToken = default)
         => sessions.Resolve(sessionId).GetStackTraceAsync(threadId, startFrame, levels, cancellationToken);
 
@@ -31,7 +31,7 @@ public static class InspectionTools
     public static Task<IReadOnlyList<Scope>> GetScopes(
         SessionManager sessions,
         [Description("frameId from get_callstack.")] int frameId,
-        string? sessionId = null,
+        [Description("Session id; omit for the active session.")] string? sessionId = null,
         CancellationToken cancellationToken = default)
         => sessions.Resolve(sessionId).GetScopesAsync(frameId, cancellationToken);
 
@@ -40,7 +40,7 @@ public static class InspectionTools
     public static Task<Page<Variable>> GetVariables(
         SessionManager sessions,
         [Description("variablesReference from a scope or a parent variable.")] int variablesReference,
-        string? sessionId = null,
+        [Description("Session id; omit for the active session.")] string? sessionId = null,
         [Description("Maximum number of children to return in this page (1-1000).")] int max = Paging.DefaultMax,
         [Description("Number of children to skip (use the previous page's nextOffset).")] int offset = 0,
         CancellationToken cancellationToken = default)
@@ -53,7 +53,7 @@ public static class InspectionTools
         [Description("The expression to evaluate.")] string expression,
         [Description("frameId for evaluation context; omit for the top frame.")] int? frameId = null,
         [Description("Evaluation context: 'repl', 'watch', or 'hover'.")] string? context = null,
-        string? sessionId = null,
+        [Description("Session id; omit for the active session.")] string? sessionId = null,
         CancellationToken cancellationToken = default)
         => sessions.Resolve(sessionId).EvaluateAsync(expression, frameId, context, cancellationToken);
 
@@ -62,7 +62,7 @@ public static class InspectionTools
     public static Task<ExceptionInfo?> GetExceptionInfo(
         SessionManager sessions,
         [Description("Thread id; omit for the last stopped thread.")] int? threadId = null,
-        string? sessionId = null,
+        [Description("Session id; omit for the active session.")] string? sessionId = null,
         CancellationToken cancellationToken = default)
         => sessions.Resolve(sessionId).GetExceptionInfoAsync(threadId, cancellationToken);
 }

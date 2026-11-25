@@ -30,8 +30,9 @@ public static class DebugInstructions
         4. At a stop: get_callstack -> get_scopes(frameId) -> get_variables(ref). Walk
            variablesReference to expand nested objects. Prefer get_variables over
            evaluate for plain inspection — evaluate EXECUTES code in the target.
-        5. For async: list_tasks / get_async_graph / get_async_callstack — the unique
-           feature; see ALL in-flight Tasks and their await/continuation chains.
+        5. For async: list_tasks / get_async_graph / get_async_callstack — they read
+           the heap at a stop and list every in-flight Task with its state, and the
+           await/continuation chains between them.
         6. restart_debugging() to rerun with the same breakpoints (and env); clear_all_breakpoints
            to reset. debug_stop when done: it kills a process you launched (and children auto-attached from it), but only
            detaches from one you attached to (the process keeps running).

@@ -20,7 +20,7 @@ public static class TaskTools
         SessionManager sessions,
         TaskInspector inspector,
         [Description("Optional status filter, case-insensitive.")] string? status = null,
-        string? sessionId = null,
+        [Description("Session id; omit for the active session.")] string? sessionId = null,
         [Description("Maximum number of tasks to return in this page (1-1000).")] int max = Paging.DefaultMax,
         [Description("Number of matching tasks to skip (use the previous page's nextOffset).")] int offset = 0,
         CancellationToken cancellationToken = default)
@@ -33,7 +33,7 @@ public static class TaskTools
         SessionManager sessions,
         TaskInspector inspector,
         [Description("Heap address, hex (0x...) or decimal.")] string address,
-        string? sessionId = null,
+        [Description("Session id; omit for the active session.")] string? sessionId = null,
         CancellationToken cancellationToken = default)
     {
         ulong addr = ParseAddress(address);
@@ -46,7 +46,7 @@ public static class TaskTools
     public static Task<Page<AsyncNode>> GetAsyncGraph(
         SessionManager sessions,
         TaskInspector inspector,
-        string? sessionId = null,
+        [Description("Session id; omit for the active session.")] string? sessionId = null,
         [Description("Maximum number of nodes to return in this page (1-1000).")] int max = Paging.DefaultMax,
         [Description("Number of nodes to skip (use the previous page's nextOffset).")] int offset = 0,
         CancellationToken cancellationToken = default)
@@ -59,7 +59,7 @@ public static class TaskTools
         SessionManager sessions,
         TaskInspector inspector,
         [Description("Starting Task heap address (hex 0x... or decimal).")] string address,
-        string? sessionId = null,
+        [Description("Session id; omit for the active session.")] string? sessionId = null,
         CancellationToken cancellationToken = default)
     {
         ulong addr = ParseAddress(address);
