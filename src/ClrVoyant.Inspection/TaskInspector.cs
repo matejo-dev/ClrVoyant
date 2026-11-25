@@ -44,6 +44,7 @@ public sealed class TaskInspector : IDisposable
     {
         public readonly SemaphoreSlim Gate = new(1, 1);
         public Snapshot? Current;
+        public bool Evicted; // guarded by Gate
     }
 
     readonly System.Collections.Concurrent.ConcurrentDictionary<int, PidCache> _byPid = new();
@@ -52,20 +53,55 @@ public sealed class TaskInspector : IDisposable
     // matches the current stop, otherwise taking a fresh snapshot.
     T Read<T>(int pid, long stopId, Func<ClrRuntime, T> read)
     {
-        var pc = _byPid.GetOrAdd(pid, _ => new PidCache());
-        pc.Gate.Wait();
-        try
+        while (true)
         {
-            if (pc.Current is null || pc.Current.StopId != stopId)
+            var pc = _byPid.GetOrAdd(pid, _ => new PidCache());
+            pc.Gate.Wait();
+            try
             {
-                pc.Current?.Dispose();
-                var dt = OpenDataTarget(pid);
-                pc.Current = new Snapshot(stopId, dt, dt.ClrVersions[0].CreateRuntime());
+                if (pc.Evicted) continue; // the process ended while we queued: start over with a fresh entry
+                if (pc.Current is null || pc.Current.StopId != stopId)
+                {
+                    pc.Current?.Dispose();
+                    pc.Current = null;
+                    var dt = OpenDataTarget(pid);
+                    try { pc.Current = new Snapshot(stopId, dt, PickRuntime(dt.ClrVersions, pid).CreateRuntime()); }
+                    catch { dt.Dispose(); throw; }
+                }
+                return read(pc.Current.Runtime);
             }
-            return read(pc.Current.Runtime);
+            finally { pc.Gate.Release(); }
         }
-        finally { pc.Gate.Release(); }
     }
+
+    // The first CLR in the process. A process that never loaded one (a native program, or a
+    // .NET app that has not started its runtime yet) has none: say so, instead of letting an
+    // index error out of ClrMD's list.
+    internal static ClrInfo PickRuntime(IReadOnlyList<ClrInfo> clrs, int pid)
+        => clrs.Count > 0
+            ? clrs[0]
+            : throw new InvalidOperationException(
+                $"Process {pid} has no .NET runtime loaded, so its tasks cannot be read. Attach to the managed .NET process instead (see list_processes), and wait until its runtime has started.");
+
+    /// <summary>Drop the cached snapshot of <paramref name="pid"/>. Called when the process
+    /// is gone (see <c>SessionManager.DebuggeeEnded</c>): the snapshot would otherwise stay
+    /// pinned, and a later process that reuses the pid at the same stop sequence number
+    /// would be served the dead one's heap. Does not block the caller: a read in progress
+    /// finishes first, then the snapshot is released.</summary>
+    public void Evict(int pid)
+    {
+        if (!_byPid.TryRemove(pid, out var pc)) return;
+        _ = Task.Run(() =>
+        {
+            pc.Gate.Wait();
+            try { pc.Evicted = true; pc.Current?.Dispose(); pc.Current = null; }
+            catch { /* best effort: the process is gone */ }
+            finally { pc.Gate.Release(); }
+        });
+    }
+
+    /// <summary>Pids with a cached snapshot (test seam).</summary>
+    internal IReadOnlyCollection<int> CachedPids => _byPid.Keys.ToList();
 
     // Open a ClrMD view of the (stopped) target. Windows: a PSS snapshot, a frozen
     // copy stable even if the process resumes. Linux: a passive, read-only attach

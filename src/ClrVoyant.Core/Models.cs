@@ -36,7 +36,13 @@ public sealed record SessionInfo(
     StopLocation? Stop,
     int? ExitCode = null);
 
-/// <summary>A stop reported by a specific session (used by wait_for_any_stop).</summary>
+/// <summary>An event reported by a specific session through wait_for_any_stop: a stop
+/// (<paramref name="State"/> Stopped, with <paramref name="Stop"/>), the process
+/// exiting (Exited, with <paramref name="ExitCode"/> when known) or the debugger
+/// connection being lost (Faulted, explained by <paramref name="Message"/>).</summary>
 public sealed record SessionStop(
     string SessionId,
-    StopLocation Stop);
+    StopLocation? Stop,
+    SessionState State = SessionState.Stopped,
+    int? ExitCode = null,
+    string? Message = null);

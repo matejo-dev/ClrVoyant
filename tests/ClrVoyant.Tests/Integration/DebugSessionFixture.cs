@@ -19,6 +19,7 @@ public sealed class DebugSessionFixture : IAsyncLifetime
     public async Task InitializeAsync()
     {
         Mgr = new SessionManager(() => new DapEngine(TestPaths.Netcoredbg));
+        Mgr.DebuggeeEnded += Inspector.Evict;
         await DebugTools.DebugLaunch(Mgr, TestPaths.SampleAppDll);
         await DebugTools.SetBreakpoint(Mgr, TestPaths.SampleAppSrc, TestPaths.BreakpointLine);
         Stop = await DebugTools.Continue(Mgr, threadId: null, timeoutMs: 20000);

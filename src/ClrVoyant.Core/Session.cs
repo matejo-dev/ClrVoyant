@@ -3,23 +3,33 @@ namespace ClrVoyant.Core;
 /// <summary>
 /// One debugged process: an id, its engine, and the wait/stop coordination.
 ///
-/// Stop routing: a resume operation (continue/step) arms a "targeted waiter";
-/// the next stop completes that waiter and is NOT treated as spontaneous. A stop
-/// with no targeted waiter (e.g. a breakpoint hit while the agent was doing
-/// something else, or stopAtEntry) raises <see cref="SpontaneousStop"/>, which
-/// the SessionManager feeds into wait_for_any_stop. <see cref="LastStop"/> is
-/// updated on every stop so debug_status always reflects the current location.
+/// Event routing: a resume operation (continue/step) arms a "targeted waiter";
+/// the next stop, exit or loss of the debugger connection completes that waiter and
+/// is NOT treated as spontaneous. The same events with no targeted waiter (a
+/// breakpoint hit while the agent was doing something else, stopAtEntry, a process
+/// dying while nobody waits) raise <see cref="SpontaneousStop"/>, which the
+/// SessionManager feeds into wait_for_any_stop. Only one resume operation may be in
+/// flight per session. <see cref="LastStop"/> is updated on every stop so
+/// debug_status always reflects the current location.
 /// </summary>
 public sealed class Session : IAsyncDisposable
 {
     readonly object _gate = new();
-    TaskCompletionSource<StopLocation?>? _targetedWaiter;
+    TaskCompletionSource<StopOutcome>? _targetedWaiter;
 
     // Server-side breakpoint store. DAP setBreakpoints replaces ALL breakpoints
     // for a source, so we keep the desired set per file and assign our own stable
     // ids (engine ids change on each re-send). All access is serialized by _bpLock.
     readonly SemaphoreSlim _bpLock = new(1, 1);
-    readonly Dictionary<string, List<(int id, BreakpointRequest req)>> _bpsByFile = new();
+    // Keys compare the way the file system compares paths, so two spellings of one file are
+    // one entry. netcoredbg itself keys sources by the exact spelling it is sent (verified on
+    // Windows: clearing a file under another casing leaves its breakpoints installed), so the
+    // engine must always be given the FIRST spelling seen (_bpPaths), or a re-send under a
+    // different casing would stack a second, independent set on top of the first.
+    static readonly StringComparer PathComparer =
+        OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+    readonly Dictionary<string, List<(int id, BreakpointRequest req)>> _bpsByFile = new(PathComparer);
+    readonly Dictionary<string, string> _bpPaths = new(PathComparer);
     readonly Dictionary<int, (bool verified, int line, string file)> _bpResult = new();
     // Function breakpoints are global (DAP setFunctionBreakpoints replaces the whole
     // set), kept in their own list but sharing _bpCounter so ids are unique across
@@ -33,6 +43,7 @@ public sealed class Session : IAsyncDisposable
     const int OutputCapacityChars = 64 * 1024;
     readonly BoundedTextTail _output = new(OutputCapacityChars);
     int? _exitCode;
+    string? _faultMessage;
 
     public string Id { get; }
     public IDebugEngine Engine { get; private set; }
@@ -44,7 +55,12 @@ public sealed class Session : IAsyncDisposable
     /// <summary>True when this server owns the debuggee's lifetime: it launched it
     /// (debug_launch) or started the process that hosts it (debug_test). An attached
     /// session leaves the process it merely attached to running when it ends.</summary>
-    public bool OwnsDebuggee => LaunchInfo is not null || OwnedResource is not null;
+    public bool OwnsDebuggee => LaunchInfo is not null || OwnedResource is not null || OwnedByParent;
+
+    /// <summary>True for a process auto-attached as a child of a session whose debuggee
+    /// this server owns: it belongs to a process tree the server started, so it ends with
+    /// its session. Propagates to grandchildren through <see cref="OwnsDebuggee"/>.</summary>
+    internal bool OwnedByParent { get; set; }
 
     /// <summary>An external resource whose lifetime is tied to this session and is
     /// disposed when the session ends (e.g. the <c>dotnet test</c> driver process
@@ -55,8 +71,17 @@ public sealed class Session : IAsyncDisposable
     public long StopId { get; private set; }
     public StopLocation? LastStop { get; private set; }
 
-    /// <summary>Raised for a stop that no resume operation was waiting for.</summary>
-    public event Action<Session, StopLocation>? SpontaneousStop;
+    /// <summary>Raised for a stop, exit or lost debugger connection that no resume
+    /// operation was waiting for. The <c>long</c> is <see cref="StopId"/> at that moment;
+    /// <see cref="IsCurrent"/> uses it to tell whether the event is still true when it is
+    /// read later.</summary>
+    public event Action<Session, SessionStop, long>? SpontaneousStop;
+
+    /// <summary>Raised with the process id when a process this session debugged is gone:
+    /// it exited, the debugger connection was lost, a restart replaced it, or the session
+    /// was disposed (an attached process may still be alive, but is no longer debugged).
+    /// Lets owners of per-process caches drop them before the pid is reused.</summary>
+    public event Action<int>? DebuggeeEnded;
 
     public Session(string id, IDebugEngine engine)
     {
@@ -69,6 +94,7 @@ public sealed class Session : IAsyncDisposable
     {
         engine.Stopped += OnStopped;
         engine.Exited += OnExited;
+        engine.Faulted += OnFaulted;
         engine.Output += OnOutput;
     }
 
@@ -76,6 +102,7 @@ public sealed class Session : IAsyncDisposable
     {
         engine.Stopped -= OnStopped;
         engine.Exited -= OnExited;
+        engine.Faulted -= OnFaulted;
         engine.Output -= OnOutput;
     }
 
@@ -83,6 +110,8 @@ public sealed class Session : IAsyncDisposable
     public int Pid => Engine.Pid;
     /// <summary>Exit code of the debuggee once it has exited and the debugger reported it.</summary>
     public int? ExitCode { get { lock (_gate) return _exitCode; } }
+    /// <summary>Why the debugger connection was lost, once the engine reported it.</summary>
+    public string? FaultMessage { get { lock (_gate) return _faultMessage; } }
     public SessionInfo ToInfo() => new(Id, Pid, State, LastStop, ExitCode);
 
     /// <summary>The last <paramref name="maxChars"/> characters of the debuggee's captured output.</summary>
@@ -97,10 +126,10 @@ public sealed class Session : IAsyncDisposable
 
     void OnStopped(StopLocation loc)
     {
-        lock (_gate) { StopId++; LastStop = loc; }
-        var waiter = TakeWaiter();
-        if (waiter is not null) waiter.TrySetResult(loc);
-        else SpontaneousStop?.Invoke(this, loc);
+        long seq;
+        TaskCompletionSource<StopOutcome>? waiter;
+        lock (_gate) { seq = ++StopId; LastStop = loc; waiter = TakeWaiterLocked(); }
+        Deliver(waiter, new StopOutcome(SessionState.Stopped, loc), new SessionStop(Id, loc), seq);
     }
 
     void OnOutput(DebugOutput o)
@@ -111,49 +140,131 @@ public sealed class Session : IAsyncDisposable
 
     void OnExited(int? code)
     {
-        lock (_gate) { _exitCode = code; }
-        var waiter = TakeWaiter();
-        waiter?.TrySetResult(null); // null => exited
+        long seq;
+        TaskCompletionSource<StopOutcome>? waiter;
+        lock (_gate) { _exitCode = code; seq = StopId; waiter = TakeWaiterLocked(); }
+        Deliver(waiter, new StopOutcome(SessionState.Exited, null, code),
+            new SessionStop(Id, null, SessionState.Exited, code), seq);
+        RaiseDebuggeeEnded(Pid);
     }
 
-    TaskCompletionSource<StopLocation?>? TakeWaiter()
+    void OnFaulted(string reason)
     {
-        lock (_gate) { var w = _targetedWaiter; _targetedWaiter = null; return w; }
+        long seq;
+        TaskCompletionSource<StopOutcome>? waiter;
+        lock (_gate) { _faultMessage = reason; seq = StopId; waiter = TakeWaiterLocked(); }
+        string lost = LostMessage(reason);
+        Deliver(waiter, new StopOutcome(SessionState.Faulted, null, Message: lost),
+            new SessionStop(Id, null, SessionState.Faulted, Message: lost), seq);
+        RaiseDebuggeeEnded(Pid);
     }
 
-    /// <summary>Send a resume command and wait for the next stop, the process
-    /// exiting, or the timeout. On timeout the target is left running.</summary>
+    // A resume operation waiting for this event consumes it; otherwise it is spontaneous.
+    void Deliver(TaskCompletionSource<StopOutcome>? waiter, StopOutcome outcome, SessionStop spontaneous, long seq)
+    {
+        if (waiter is not null) waiter.TrySetResult(outcome);
+        else SpontaneousStop?.Invoke(this, spontaneous, seq);
+    }
+
+    void RaiseDebuggeeEnded(int pid)
+    {
+        if (pid > 0) DebuggeeEnded?.Invoke(pid);
+    }
+
+    static string LostMessage(string reason) =>
+        $"The debugger connection was lost ({reason}); the target's state is unknown. End the session with debug_stop and start a new one.";
+
+    /// <summary>Whether <paramref name="queued"/>, raised through <see cref="SpontaneousStop"/>
+    /// when the stop sequence was <paramref name="stopId"/>, still describes this session: a
+    /// stop only while the session is still stopped at that same stop (not resumed, not
+    /// stopped again); an exit or a lost connection only while the session is still in that
+    /// state of the same run (a restart starts a new run).</summary>
+    public bool IsCurrent(SessionStop queued, long stopId)
+    {
+        lock (_gate) { if (StopId != stopId) return false; }
+        return queued.State == State;
+    }
+
+    TaskCompletionSource<StopOutcome>? TakeWaiterLocked()
+    {
+        var w = _targetedWaiter;
+        _targetedWaiter = null;
+        return w;
+    }
+
+    // Disarm our waiter if it is still the armed one, so the next real event is not swallowed.
+    void DisarmWaiter(TaskCompletionSource<StopOutcome> mine)
+    {
+        lock (_gate) { if (ReferenceEquals(_targetedWaiter, mine)) _targetedWaiter = null; }
+    }
+
+    /// <summary>Send a resume command and wait for the next stop, the process exiting, the
+    /// debugger connection being lost, or the timeout. On timeout the target is left running.
+    /// If the command is rejected, or <paramref name="ct"/> is cancelled, the waiter is disarmed
+    /// so the next real stop is reported as spontaneous instead of being swallowed; cancellation
+    /// surfaces as <see cref="OperationCanceledException"/>, never as a timeout. Only one resume
+    /// may be in flight: a second one is rejected, because queuing it would silently resume the
+    /// target again at the first one's stop.</summary>
     public async Task<StopOutcome> ResumeAndWaitAsync(Func<Task> sendCommand, TimeSpan timeout, CancellationToken ct = default)
     {
-        var tcs = new TaskCompletionSource<StopLocation?>(TaskCreationOptions.RunContinuationsAsynchronously);
-        lock (_gate) { _targetedWaiter = tcs; }
-
-        await sendCommand();
-
-        var completed = await Task.WhenAny(tcs.Task, Task.Delay(timeout, ct));
-        if (completed != tcs.Task)
+        ct.ThrowIfCancellationRequested();
+        var tcs = new TaskCompletionSource<StopOutcome>(TaskCreationOptions.RunContinuationsAsynchronously);
+        lock (_gate)
         {
-            TakeWaiter(); // drop the stale waiter so a later stop is spontaneous
-            return new StopOutcome(State, null); // timed out: still running
+            var state = State;
+            if (state == SessionState.Faulted) throw new InvalidOperationException(FaultedMessage());
+            if (state == SessionState.Exited)
+                throw new InvalidOperationException(
+                    $"Session '{Id}' has exited{(_exitCode is int c ? $" with code {c}" : "")}; there is nothing to resume. Use restart_debugging or debug_launch.");
+            if (_targetedWaiter is not null)
+                throw new InvalidOperationException(
+                    $"Session '{Id}' already has a continue/step in progress. Wait for it to return (or call pause) before resuming again.");
+            _targetedWaiter = tcs;
         }
 
-        var loc = await tcs.Task;
-        return loc is null
-            ? new StopOutcome(SessionState.Exited, null, ExitCode)
-            : new StopOutcome(SessionState.Stopped, await EnrichAsync(loc, ct));
+        try { await sendCommand(); }
+        catch { DisarmWaiter(tcs); throw; }
+
+        using var window = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        window.CancelAfter(timeout);
+        try
+        {
+            await tcs.Task.WaitAsync(window.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            DisarmWaiter(tcs);
+            // An event that won the race against the timeout or cancellation is not lost.
+            if (!tcs.Task.IsCompletedSuccessfully)
+            {
+                ct.ThrowIfCancellationRequested();
+                return new StopOutcome(State, null); // timed out: still running
+            }
+        }
+
+        var outcome = tcs.Task.Result;
+        return outcome.State == SessionState.Stopped
+            ? outcome with { Stop = await EnrichAsync(outcome.Stop!, ct) }
+            : outcome;
     }
+
+    string FaultedMessage() =>
+        $"Session '{Id}' lost its debugger connection ({FaultMessage ?? "the debugger ended"}); the target's state is unknown. End it with debug_stop and start a new session.";
 
     /// <summary>Fill file/line on a stop by reading the top stack frame.</summary>
     public async Task<StopLocation> EnrichAsync(StopLocation loc, CancellationToken ct = default)
     {
         if (loc.ThreadId is not int tid) return loc;
+        long seq;
+        lock (_gate) seq = StopId;
         try
         {
             var frames = await Engine.GetStackTraceAsync(tid, 0, 1, ct);
             if (frames.Count > 0)
             {
                 var enriched = loc with { File = frames[0].File, Line = frames[0].Line };
-                lock (_gate) { LastStop = enriched; }
+                // Only the stop that was enriched may be recorded: the target may have moved on.
+                lock (_gate) { if (StopId == seq) LastStop = enriched; }
                 return enriched;
             }
         }
@@ -163,17 +274,21 @@ public sealed class Session : IAsyncDisposable
 
     public void EnsureStopped()
     {
-        if (State != SessionState.Stopped)
-            throw new InvalidOperationException($"Session '{Id}' is '{State}', not stopped. This operation requires a stopped target.");
+        var state = State;
+        if (state == SessionState.Stopped) return;
+        throw new InvalidOperationException(state == SessionState.Faulted
+            ? FaultedMessage()
+            : $"Session '{Id}' is '{state}', not stopped. This operation requires a stopped target.");
     }
 
     // --- Breakpoints (allowed while running) ---
     public async Task<Breakpoint> AddBreakpointAsync(string file, BreakpointRequest req, CancellationToken ct = default)
     {
-        string path = Path.GetFullPath(file);
+        string fullPath = Path.GetFullPath(file);
         await _bpLock.WaitAsync(ct);
         try
         {
+            if (!_bpPaths.TryGetValue(fullPath, out var path)) _bpPaths[fullPath] = path = fullPath;
             int id = ++_bpCounter;
             if (!_bpsByFile.TryGetValue(path, out var list)) { list = new(); _bpsByFile[path] = list; }
             list.Add((id, req));
@@ -331,24 +446,50 @@ public sealed class Session : IAsyncDisposable
     /// breakpoint set. Terminates the current engine, swaps in <paramref name="newEngine"/>
     /// (a DAP engine is single-use — the netcoredbg handshake cannot be replayed),
     /// relaunches with <paramref name="req"/>, then re-applies all breakpoints.</summary>
+    /// <remarks>If the relaunch fails, the new engine is torn down and the session is left
+    /// Exited — no process, but its id, launch request and breakpoints kept — so the
+    /// caller can fix the cause and restart again, or discard it with debug_stop. The
+    /// exception says so.</remarks>
     public async Task RestartAsync(LaunchRequest req, IDebugEngine newEngine, CancellationToken ct = default)
     {
         var old = Engine;
+        int oldPid = old.Pid;
+        // Ending the old run on purpose is not an event anyone should hear: stop listening first.
+        Unsubscribe(old);
         // Restart only exists for launched sessions, whose debuggee this server owns.
         try { await old.TerminateAsync(terminateDebuggee: true, ct); } catch { /* may already be gone */ }
-        Unsubscribe(old);
         try { await old.DisposeAsync(); } catch { /* best effort */ }
+        RaiseDebuggeeEnded(oldPid);
 
         Engine = newEngine;
         Subscribe(newEngine);
 
         // Invalidate any per-stop handles and abandon a pending waiter from the old run.
-        lock (_gate) { StopId++; LastStop = null; _exitCode = null; TakeWaiter()?.TrySetResult(null); }
+        lock (_gate)
+        {
+            StopId++; LastStop = null; _exitCode = null; _faultMessage = null;
+            TakeWaiterLocked()?.TrySetResult(new StopOutcome(SessionState.Exited, null));
+        }
         _output.Clear();
 
-        await newEngine.LaunchAsync(req, ct);
-        LaunchInfo = req;
-        await ReapplyAllBreakpointsAsync(ct);
+        try
+        {
+            await newEngine.LaunchAsync(req, ct);
+            LaunchInfo = req;
+            await ReapplyAllBreakpointsAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            Unsubscribe(newEngine);
+            int newPid = newEngine.Pid;
+            try { await newEngine.TerminateAsync(terminateDebuggee: true, CancellationToken.None); } catch { /* best effort */ }
+            try { await newEngine.DisposeAsync(); } catch { /* best effort */ }
+            RaiseDebuggeeEnded(newPid);
+            if (ex is OperationCanceledException) throw;
+            throw new InvalidOperationException(
+                $"Restart of session '{Id}' failed: {ex.Message} The previous process was terminated and the new one did not start, " +
+                "so the session is now Exited; it keeps its breakpoints. Fix the cause and call restart_debugging again, or end it with debug_stop.", ex);
+        }
     }
 
     // Re-send the desired breakpoint set for every file to the current engine
@@ -372,6 +513,8 @@ public sealed class Session : IAsyncDisposable
         {
             try { await OwnedResource.DisposeAsync(); } catch { /* best effort */ }
         }
-        await Engine.DisposeAsync();
+        int pid = Pid;
+        try { await Engine.DisposeAsync(); }
+        finally { RaiseDebuggeeEnded(pid); }
     }
 }

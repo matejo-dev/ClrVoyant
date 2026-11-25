@@ -232,15 +232,16 @@ public class IntegrationControlTests
     }
 
     [Fact]
-    public async Task Auto_attach_discovers_a_child_process()
+    public async Task Auto_attach_discovers_a_child_process_and_ends_it_with_the_launched_tree()
     {
         var mgr = NewManager();
         var opts = new ClrVoyant.Server.AutoAttachOptions { Enabled = true };
         var watcher = new ClrVoyant.Server.ChildProcessWatcher(mgr, opts);
+        Process? child = null;
         try
         {
             // ParentApp spawns `dotnet SampleApp.dll` as a child .NET process.
-            await DebugTools.DebugLaunch(mgr, TestPaths.ParentAppDll, new[] { TestPaths.SampleAppDll });
+            var parent = await DebugTools.DebugLaunch(mgr, TestPaths.ParentAppDll, new[] { TestPaths.SampleAppDll });
 
             var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(20);
             while (DateTime.UtcNow < deadline && mgr.List().Count < 2)
@@ -248,9 +249,21 @@ public class IntegrationControlTests
                 await watcher.ScanOnceAsync();
                 await Task.Delay(300);
             }
-            Assert.Equal(2, mgr.List().Count); // parent + auto-attached child
+            var sessions = mgr.List();
+            Assert.Equal(2, sessions.Count); // parent + auto-attached child
+
+            // The attached session is the real child of the launched parent, not some other process.
+            var attached = sessions.Single(s => s.SessionId != parent.SessionId);
+            Assert.Contains(attached.Pid,
+                ClrVoyant.Server.ProcessLister.Enumerate().Where(p => p.parentPid == parent.Pid).Select(p => p.pid));
+            child = Process.GetProcessById(attached.Pid);
         }
         finally { await Cleanup(mgr); }
+
+        // The child belongs to the process tree the server started: stopping its session ends it.
+        Assert.NotNull(child);
+        using (child)
+            Assert.True(child.WaitForExit(15000), "the auto-attached child was left running after its session ended");
     }
 
     static async Task Cleanup(SessionManager mgr)

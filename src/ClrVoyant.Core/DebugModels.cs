@@ -37,8 +37,9 @@ public sealed record FunctionBreakpoint(
 
 /// <summary>Result of a resume operation (continue / step): the resulting state
 /// and, when stopped, where. When the process exited, <paramref name="ExitCode"/> is
-/// its exit code (null if the debugger did not report one).</summary>
-public sealed record StopOutcome(SessionState State, StopLocation? Stop, int? ExitCode = null);
+/// its exit code (null if the debugger did not report one). <paramref name="Message"/>
+/// explains a Faulted outcome (the debugger connection was lost).</summary>
+public sealed record StopOutcome(SessionState State, StopLocation? Stop, int? ExitCode = null, string? Message = null);
 
 /// <summary>A chunk of debuggee output as reported by the debugger. <paramref name="Category"/>
 /// is the DAP output category (typically stdout or stderr; console for the debugger's

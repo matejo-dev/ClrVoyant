@@ -3,18 +3,60 @@ using ClrVoyant.Core;
 namespace ClrVoyant.Tests.Fakes;
 
 /// <summary>
-/// In-memory IDebugEngine test double. Lets tests drive stop/exit events and
+/// In-memory IDebugEngine test double. Lets tests drive stop/exit/fault events and
 /// records control commands, so Session/SessionManager logic can be verified
 /// deterministically without netcoredbg.
+///
+/// By default a resume answers immediately and the stop event fires synchronously
+/// inside it (the "event already happened" path). To test a LATE event, set
+/// <see cref="StopOnResume"/> to null, start the resume without awaiting it, await
+/// <see cref="ResumeCalledAsync"/>, then call <see cref="RaiseStopped"/> /
+/// <see cref="RaiseExited"/> / <see cref="RaiseFaulted"/> from the test (or from
+/// <c>Task.Run</c>): no timers are involved. It honours the IDebugEngine contract
+/// (see EngineContractTests): Exited is raised exactly once, also after TerminateAsync.
 /// </summary>
 public sealed class FakeDebugEngine : IDebugEngine
 {
+    readonly SemaphoreSlim _resumeCalls = new(0);
+    int _exitRaised;
+
     public int Pid { get; set; } = 1234;
     public SessionState State { get; set; } = SessionState.Starting;
 
     public event Action<StopLocation>? Stopped;
     public event Action<int?>? Exited;
+    public event Action<string>? Faulted;
     public event Action<DebugOutput>? Output;
+
+    /// <summary>When set, Launch/Attach/Continue/Step throw it (a rejected command).</summary>
+    /// <summary>Runs inside LaunchAsync before it fails or succeeds (e.g. to raise a stopAtEntry stop).</summary>
+    public Action? OnLaunch { get; set; }
+    public Exception? LaunchFailure { get; set; }
+    public Exception? AttachFailure { get; set; }
+    public Exception? ResumeFailure { get; set; }
+    public Exception? TerminateFailure { get; set; }
+    public Exception? DisposeFailure { get; set; }
+    public Exception? StackTraceFailure { get; set; }
+    /// <summary>When set, GetStackTraceAsync waits for it (lets a test hold an enrichment mid-flight).</summary>
+    public Task? StackTraceGate { get; set; }
+    readonly SemaphoreSlim _stackTraceCalls = new(0);
+    /// <summary>Completes once a GetStackTraceAsync call has reached the engine (bounded).</summary>
+    public async Task StackTraceCalledAsync()
+    {
+        if (!await _stackTraceCalls.WaitAsync(TimeSpan.FromSeconds(10)))
+            throw new TimeoutException("The engine never received a stack trace request.");
+    }
+    /// <summary>Lines the engine reports as not (yet) verified.</summary>
+    public HashSet<int> UnverifiedLines { get; } = new();
+    public int DisposeCalls { get; private set; }
+
+    /// <summary>Completes when a resume command (continue/step) has reached the engine,
+    /// once per call. Bounded, so a test that never resumes fails instead of hanging.</summary>
+    public async Task ResumeCalledAsync()
+    {
+        if (!await _resumeCalls.WaitAsync(TimeSpan.FromSeconds(10)))
+            throw new TimeoutException("The engine never received a resume command.");
+    }
 
     // Recorded calls.
     public int ContinueCalls { get; private set; }
@@ -36,11 +78,20 @@ public sealed class FakeDebugEngine : IDebugEngine
 
     public void RaiseStopped(StopLocation loc) { State = SessionState.Stopped; Stopped?.Invoke(loc); }
     public void RaiseOutput(string category, string text) => Output?.Invoke(new DebugOutput(category, text));
-    public void RaiseExited(int? code) { State = SessionState.Exited; Exited?.Invoke(code); }
+    /// <summary>The debuggee ends. Raised once per engine, like the real one.</summary>
+    public void RaiseExited(int? code)
+    {
+        State = SessionState.Exited;
+        if (Interlocked.Exchange(ref _exitRaised, 1) == 0) Exited?.Invoke(code);
+    }
+    /// <summary>The debugger connection is lost.</summary>
+    public void RaiseFaulted(string reason) { State = SessionState.Faulted; Faulted?.Invoke(reason); }
 
     public Task LaunchAsync(LaunchRequest request, CancellationToken ct = default)
     {
         LastLaunch = request;
+        OnLaunch?.Invoke();
+        if (LaunchFailure is not null) return Task.FromException(LaunchFailure);
         State = SessionState.Running;
         return Task.CompletedTask;
     }
@@ -48,6 +99,7 @@ public sealed class FakeDebugEngine : IDebugEngine
     public Task AttachAsync(int pid, CancellationToken ct = default)
     {
         Pid = pid;
+        if (AttachFailure is not null) return Task.FromException(AttachFailure);
         State = SessionState.Running;
         return Task.CompletedTask;
     }
@@ -56,15 +108,15 @@ public sealed class FakeDebugEngine : IDebugEngine
     {
         TerminateCalls++;
         LastTerminateDebuggee = terminateDebuggee;
-        State = SessionState.Exited;
-        return Task.CompletedTask;
+        RaiseExited(null);
+        return TerminateFailure is null ? Task.CompletedTask : Task.FromException(TerminateFailure);
     }
 
     public Task<IReadOnlyList<Breakpoint>> SetBreakpointsAsync(string file, IReadOnlyList<BreakpointRequest> breakpoints, CancellationToken ct = default)
     {
         SetBreakpointCalls.Add((file, breakpoints));
         IReadOnlyList<Breakpoint> result = breakpoints
-            .Select((b, i) => new Breakpoint(i + 1, true, file, b.Line))
+            .Select((b, i) => new Breakpoint(i + 1, !UnverifiedLines.Contains(b.Line), file, b.Line))
             .ToList();
         return Task.FromResult(result);
     }
@@ -89,15 +141,13 @@ public sealed class FakeDebugEngine : IDebugEngine
     public Task ContinueAsync(int? threadId, CancellationToken ct = default)
     {
         ContinueCalls++;
-        Resume();
-        return Task.CompletedTask;
+        return Resume();
     }
 
     public Task StepAsync(StepKind kind, int threadId, CancellationToken ct = default)
     {
         Steps.Add(kind);
-        Resume();
-        return Task.CompletedTask;
+        return Resume();
     }
 
     public Task PauseAsync(int? threadId, CancellationToken ct = default)
@@ -107,19 +157,28 @@ public sealed class FakeDebugEngine : IDebugEngine
     }
 
     // Simulate the engine resuming and then either stopping again or exiting.
-    void Resume()
+    Task Resume()
     {
+        _resumeCalls.Release();
+        // A rejected command leaves the target where it was (like the real engine).
+        if (ResumeFailure is not null) return Task.FromException(ResumeFailure);
         State = SessionState.Running;
         if (ExitOnResume) RaiseExited(0);
         else if (StopOnResume is not null) RaiseStopped(StopOnResume);
-        // else: stays running (lets tests exercise the timeout path)
+        // else: stays running until the test raises an event (late-stop / timeout paths)
+        return Task.CompletedTask;
     }
 
     public Task<IReadOnlyList<ThreadInfo>> GetThreadsAsync(CancellationToken ct = default)
         => Task.FromResult<IReadOnlyList<ThreadInfo>>(new[] { new ThreadInfo(1, "main") });
 
-    public Task<IReadOnlyList<StackFrame>> GetStackTraceAsync(int threadId, int startFrame, int levels, CancellationToken ct = default)
-        => Task.FromResult<IReadOnlyList<StackFrame>>(new[] { TopFrame });
+    public async Task<IReadOnlyList<StackFrame>> GetStackTraceAsync(int threadId, int startFrame, int levels, CancellationToken ct = default)
+    {
+        _stackTraceCalls.Release();
+        if (StackTraceGate is { } gate) await gate;
+        if (StackTraceFailure is not null) throw StackTraceFailure;
+        return new[] { TopFrame };
+    }
 
     public Task<IReadOnlyList<Scope>> GetScopesAsync(int frameId, CancellationToken ct = default)
         => Task.FromResult<IReadOnlyList<Scope>>(new[] { new Scope("Locals", 100) });
@@ -133,5 +192,9 @@ public sealed class FakeDebugEngine : IDebugEngine
     public Task<ExceptionInfo?> GetExceptionInfoAsync(int threadId, CancellationToken ct = default)
         => Task.FromResult<ExceptionInfo?>(new ExceptionInfo("System.Exception", "boom", null));
 
-    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    public ValueTask DisposeAsync()
+    {
+        DisposeCalls++;
+        return DisposeFailure is null ? ValueTask.CompletedTask : ValueTask.FromException(DisposeFailure);
+    }
 }

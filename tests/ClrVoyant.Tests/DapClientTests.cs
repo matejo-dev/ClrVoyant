@@ -295,6 +295,33 @@ public class DapClientTests : IDisposable
     }
 
     [Fact]
+    public async Task A_lost_connection_is_announced_once_with_the_reason()
+    {
+        var closed = new List<IOException>();
+        var first = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Client.ConnectionClosed += e => { lock (closed) closed.Add(e); first.TrySetResult(); };
+        Client.Start();
+
+        _adapter.Eof();
+        await first.Task.WaitAsync(Bound);
+        await Assert.ThrowsAsync<IOException>(() => Client.RequestAsync("probe").WaitAsync(Bound));
+
+        lock (closed) Assert.Contains("closed its output stream", Assert.Single(closed).Message);
+    }
+
+    [Fact]
+    public void Disposing_the_client_is_not_announced_as_a_lost_connection()
+    {
+        var announced = 0;
+        Client.ConnectionClosed += _ => Interlocked.Increment(ref announced);
+        Client.Start();
+
+        Client.Dispose();
+
+        Assert.Equal(0, Volatile.Read(ref announced));
+    }
+
+    [Fact]
     public async Task A_failed_write_closes_the_connection_and_names_the_request()
     {
         Client.Start();

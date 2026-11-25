@@ -20,6 +20,10 @@ public sealed class DapEngine : IDebugEngine
     int _pid;
     int _lastThreadId;
     int _exitRaised;
+    int _faultRaised;
+    // Set once we end the session ourselves (terminate/dispose): the adapter going away
+    // after that is the expected outcome, not a lost connection.
+    volatile bool _ending;
     volatile SessionState _state = SessionState.Starting;
 
     public int Pid => _pid;
@@ -30,6 +34,7 @@ public sealed class DapEngine : IDebugEngine
 
     public event Action<StopLocation>? Stopped;
     public event Action<int?>? Exited;
+    public event Action<string>? Faulted;
     public event Action<DebugOutput>? Output;
 
     public DapEngine(string netcoredbgPath) : this(new DapClient(netcoredbgPath)) { }
@@ -55,6 +60,13 @@ public sealed class DapEngine : IDebugEngine
                 && code.ValueKind == JsonValueKind.Number
                 && code.TryGetInt32(out int exitCode) ? exitCode : null);
         _client.TerminatedEvent += _ => OnEnded(null);
+        // A dead adapter before the debuggee's end was reported leaves the session in an
+        // unknown state; say so, so a waiting resume does not sit out its whole timeout.
+        _client.ConnectionClosed += cause =>
+        {
+            if (_ending || Volatile.Read(ref _exitRaised) == 1) return;
+            if (Interlocked.Exchange(ref _faultRaised, 1) == 0) Faulted?.Invoke(cause.Message);
+        };
         _client.Output += (category, text) => Output?.Invoke(new DebugOutput(category, text));
         _client.BreakpointChanged += body =>
         {
@@ -204,9 +216,12 @@ public sealed class DapEngine : IDebugEngine
 
     public async Task TerminateAsync(bool terminateDebuggee, CancellationToken ct = default)
     {
+        _ending = true;
         try { await _client.RequestAsync("disconnect", new { terminateDebuggee }, ct, DisconnectTimeout); }
         catch { /* adapter already gone, wedged, or cancelled: the caller disposes the engine, which kills it */ }
-        _state = SessionState.Exited;
+        // Whatever the adapter did, the session is over: report it once (the code, if
+        // netcoredbg sent 'exited' during the disconnect, was already reported).
+        OnEnded(null);
     }
 
     // --- Breakpoints ---
@@ -309,14 +324,10 @@ public sealed class DapEngine : IDebugEngine
 
     // --- Execution control (send only) ---
     public Task ContinueAsync(int? threadId, CancellationToken ct = default)
-    {
-        _state = SessionState.Running;
-        return _client.RequestAsync("continue", new { threadId = threadId ?? _lastThreadId }, ct);
-    }
+        => ResumeAsync("continue", new { threadId = threadId ?? _lastThreadId }, ct);
 
     public Task StepAsync(StepKind kind, int threadId, CancellationToken ct = default)
     {
-        _state = SessionState.Running;
         string command = kind switch
         {
             StepKind.Over => "next",
@@ -324,7 +335,22 @@ public sealed class DapEngine : IDebugEngine
             StepKind.Out => "stepOut",
             _ => "next",
         };
-        return _client.RequestAsync(command, new { threadId }, ct);
+        return ResumeAsync(command, new { threadId }, ct);
+    }
+
+    // The target counts as running from the moment the command is sent (its 'stopped' event
+    // can beat the response). If the command is rejected the target did not move: put the
+    // state back, unless a stop event already replaced it.
+    async Task ResumeAsync(string command, object args, CancellationToken ct)
+    {
+        var before = _state;
+        _state = SessionState.Running;
+        try { await _client.RequestAsync(command, args, ct); }
+        catch
+        {
+            if (_state == SessionState.Running) _state = before;
+            throw;
+        }
     }
 
     public async Task PauseAsync(int? threadId, CancellationToken ct = default)
@@ -422,6 +448,7 @@ public sealed class DapEngine : IDebugEngine
 
     public ValueTask DisposeAsync()
     {
+        _ending = true;
         _client.Dispose();
         return ValueTask.CompletedTask;
     }

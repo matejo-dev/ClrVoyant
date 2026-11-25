@@ -92,13 +92,18 @@ public static class HostFactory
     /// <summary>Register the transport-independent services: one SessionManager for
     /// the whole server (it manufactures a DapEngine per session over netcoredbg,
     /// resolved lazily so the host can be built/inspected without the engine
-    /// present), the ClrMD TaskInspector, and the opt-in child-process auto-attach.</summary>
+    /// present; it tells the ClrMD TaskInspector when a process is gone), the
+    /// TaskInspector, and the opt-in child-process auto-attach.</summary>
     static void AddDebugServices(IServiceCollection services)
     {
-        services.AddSingleton(_ =>
+        services.AddSingleton(sp =>
         {
             string netcoredbg = NetcoredbgLocator.Resolve();
-            return new SessionManager(() => new DapEngine(netcoredbg));
+            var sessions = new SessionManager(() => new DapEngine(netcoredbg));
+            // A process that is gone must not keep a heap snapshot (or lend it to a recycled pid).
+            var inspector = sp.GetRequiredService<TaskInspector>();
+            sessions.DebuggeeEnded += inspector.Evict;
+            return sessions;
         });
         services.AddSingleton<TaskInspector>();
         services.AddSingleton<TestDebugLauncher>();

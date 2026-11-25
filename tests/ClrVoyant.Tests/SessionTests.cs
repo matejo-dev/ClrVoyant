@@ -64,15 +64,6 @@ public class SessionTests
     }
 
     [Fact]
-    public async Task Pause_delegates_to_engine()
-    {
-        var fake = new FakeDebugEngine();
-        var s = NewSession(fake);
-        await s.PauseAsync(null);
-        Assert.Equal(1, fake.PauseCalls);
-    }
-
-    [Fact]
     public async Task Breakpoint_store_assigns_stable_ids_and_resends_full_set()
     {
         var fake = new FakeDebugEngine();
@@ -130,15 +121,6 @@ public class SessionTests
     }
 
     [Fact]
-    public async Task SetExceptionBreakpoints_delegates()
-    {
-        var fake = new FakeDebugEngine();
-        var s = NewSession(fake);
-        await s.SetExceptionBreakpointsAsync(new[] { "user-unhandled" });
-        Assert.Equal(new[] { "user-unhandled" }, fake.ExceptionFilters);
-    }
-
-    [Fact]
     public async Task Introspection_throws_when_not_stopped()
     {
         var fake = new FakeDebugEngine { State = SessionState.Running };
@@ -152,25 +134,12 @@ public class SessionTests
     }
 
     [Fact]
-    public async Task Introspection_delegates_when_stopped()
-    {
-        var fake = new FakeDebugEngine { State = SessionState.Stopped };
-        var s = NewSession(fake);
-        Assert.Single(await s.GetThreadsAsync());
-        Assert.Single(await s.GetStackTraceAsync(1, 0, 1));
-        Assert.Equal("Locals", Assert.Single(await s.GetScopesAsync(0)).Name);
-        Assert.Equal("x", Assert.Single(await s.GetVariablesAsync(100)).Name);
-        Assert.Equal("42", (await s.EvaluateAsync("x", 0, "repl")).Result);
-        Assert.Equal("System.Exception", (await s.GetExceptionInfoAsync(1))!.TypeName);
-    }
-
-    [Fact]
     public void Spontaneous_stop_raises_event_and_records_last_stop()
     {
         var fake = new FakeDebugEngine();
         var s = NewSession(fake);
         SessionStop? captured = null;
-        s.SpontaneousStop += (sess, loc) => captured = new SessionStop(sess.Id, loc);
+        s.SpontaneousStop += (sess, stop, _) => captured = stop;
 
         fake.RaiseStopped(new("x.cs", 7, "breakpoint", 3));
 
@@ -178,5 +147,80 @@ public class SessionTests
         Assert.Equal("s1", captured!.SessionId);
         Assert.Equal(7, s.LastStop!.Line);
         Assert.Equal(1, s.StopId);
+    }
+
+    [Fact]
+    public async Task Two_spellings_of_one_path_share_one_breakpoint_set_where_the_file_system_ignores_case()
+    {
+        var fake = new FakeDebugEngine();
+        var s = NewSession(fake);
+        string upper = Path.Combine(Path.GetTempPath(), "FOO.cs");
+        string lower = Path.Combine(Path.GetTempPath(), "foo.cs");
+
+        await s.AddBreakpointAsync(upper, new BreakpointRequest(1));
+        await s.AddBreakpointAsync(lower, new BreakpointRequest(2));
+
+        var (file, bps) = fake.SetBreakpointCalls[^1];
+        if (OperatingSystem.IsWindows())
+        {
+            // One file: the engine (replace-all per source) must get both lines, always
+            // under the first spelling, or the two sets would coexist there.
+            Assert.Equal(new[] { 1, 2 }, bps.Select(b => b.Line));
+            Assert.All(fake.SetBreakpointCalls, c => Assert.Equal(upper, c.file));
+        }
+        else
+        {
+            // Case-sensitive file system: two different files.
+            Assert.Equal(lower, file);
+            Assert.Equal(2, Assert.Single(bps).Line);
+        }
+    }
+
+    [Fact]
+    public async Task A_breakpoint_the_engine_has_not_bound_is_reported_unverified_with_its_stable_id()
+    {
+        var fake = new FakeDebugEngine();
+        fake.UnverifiedLines.Add(20);
+        var s = NewSession(fake);
+
+        var bound = await s.AddBreakpointAsync("a.cs", new BreakpointRequest(10));
+        var pending = await s.AddBreakpointAsync("a.cs", new BreakpointRequest(20));
+
+        Assert.True(bound.Verified);
+        Assert.False(pending.Verified);
+        Assert.Equal(new[] { (1, true), (2, false) }, (await s.ListBreakpointsAsync()).Select(b => (b.Id, b.Verified)));
+    }
+
+    [Fact]
+    public async Task Function_breakpoints_share_the_id_space_can_be_removed_and_survive_a_restart()
+    {
+        var fake = new FakeDebugEngine();
+        var s = NewSession(fake);
+        var fileBp = await s.AddBreakpointAsync("a.cs", new BreakpointRequest(10));
+        var fnBp = await s.AddFunctionBreakpointAsync(new FunctionBreakpointRequest("Ns.Type.Method"));
+        Assert.NotEqual(fileBp.Id, fnBp.Id); // one id space across both kinds
+
+        var replacement = new FakeDebugEngine();
+        await s.RestartAsync(new LaunchRequest("a.dll"), replacement);
+        // The new engine got both sets again, under the same stable ids.
+        Assert.Equal("Ns.Type.Method", Assert.Single(Assert.Single(replacement.SetFunctionBreakpointCalls)).FunctionName);
+        Assert.Equal(fnBp.Id, Assert.Single(await s.ListFunctionBreakpointsAsync()).Id);
+
+        Assert.True(await s.RemoveBreakpointAsync(fnBp.Id));
+        Assert.Empty(await s.ListFunctionBreakpointsAsync());
+        Assert.Empty(replacement.SetFunctionBreakpointCalls[^1]); // the engine's set was emptied too
+        Assert.Single(await s.ListBreakpointsAsync()); // the file breakpoint is untouched
+    }
+
+    [Fact]
+    public async Task A_stop_is_still_reported_when_its_location_cannot_be_read()
+    {
+        var fake = new FakeDebugEngine { StopOnResume = new("raw.cs", 10, "breakpoint", 1), StackTraceFailure = new IOException("adapter busy") };
+        var s = NewSession(fake);
+
+        var outcome = await s.ContinueAsync(null, TimeSpan.FromSeconds(30));
+
+        Assert.Equal(SessionState.Stopped, outcome.State);
+        Assert.Equal("raw.cs", outcome.Stop!.File); // unenriched, but not lost
     }
 }

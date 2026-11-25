@@ -16,9 +16,15 @@ public interface IDebugEngine : IAsyncDisposable
     SessionState State { get; }
 
     event Action<StopLocation>? Stopped;
-    /// <summary>Raised exactly once when the debuggee ends, with its exit code when the
-    /// debugger reported one.</summary>
+    /// <summary>Raised exactly once when the debuggee ends (it exited, or
+    /// <see cref="TerminateAsync"/> ended it), with its exit code when the debugger
+    /// reported one.</summary>
     event Action<int?>? Exited;
+    /// <summary>Raised at most once when the debugger itself is lost (the adapter died or
+    /// its connection closed) before the debuggee's end was reported; the argument says
+    /// why. <see cref="State"/> is Faulted from then on. Not raised for an end this
+    /// engine caused through <see cref="TerminateAsync"/> or disposal.</summary>
+    event Action<string>? Faulted;
     /// <summary>Debuggee (and debugger) output as it arrives.</summary>
     event Action<DebugOutput>? Output;
 

@@ -252,6 +252,144 @@ public class DapEngineTests : IDisposable
         Assert.Equal(SessionState.Exited, _engine.State);
     }
 
+    // ---- end-of-session events ----
+
+    [Fact]
+    public async Task Terminate_alone_reports_the_end_once_though_the_adapter_says_nothing()
+    {
+        await LaunchedAsync();
+        var exits = new List<int?>();
+        _engine.Exited += exits.Add;
+
+        await _engine.TerminateAsync(true).WaitAsync(Bound);
+
+        Assert.Equal(new int?[] { null }, exits);
+    }
+
+    [Fact]
+    public async Task Terminate_reports_the_end_exactly_once_even_if_the_adapter_reports_it_too()
+    {
+        await LaunchedAsync();
+        var exits = new List<int?>();
+        _engine.Exited += exits.Add;
+
+        await _engine.TerminateAsync(true).WaitAsync(Bound);
+        _adapter.Event("terminated"); // the adapter's own report of the same end
+        await SyncAsync();
+
+        Assert.Equal(new int?[] { null }, exits);
+    }
+
+    [Fact]
+    public async Task A_dead_adapter_is_reported_once_as_a_lost_connection()
+    {
+        await LaunchedAsync();
+        var faults = new List<string>();
+        _engine.Faulted += faults.Add;
+        var exits = new List<int?>();
+        _engine.Exited += exits.Add;
+        var closed = ClosedSignal();
+
+        _adapter.Eof();
+        await closed;
+
+        Assert.Contains("closed", Assert.Single(faults));
+        Assert.Empty(exits); // the debuggee's fate is unknown, not "exited"
+    }
+
+    [Fact]
+    public async Task An_adapter_that_goes_away_after_a_normal_exit_is_not_a_fault()
+    {
+        await LaunchedAsync();
+        var faults = new List<string>();
+        _engine.Faulted += faults.Add;
+        _adapter.Event("exited", new { exitCode = 0 });
+        await SyncAsync();
+        var closed = ClosedSignal();
+
+        _adapter.Eof();
+        await closed;
+
+        Assert.Empty(faults);
+    }
+
+    [Fact]
+    public async Task An_adapter_that_goes_away_after_terminate_is_not_a_fault()
+    {
+        await LaunchedAsync();
+        var faults = new List<string>();
+        _engine.Faulted += faults.Add;
+        await _engine.TerminateAsync(true).WaitAsync(Bound);
+        var closed = ClosedSignal();
+
+        _adapter.Eof();
+        await closed;
+
+        Assert.Empty(faults);
+    }
+
+    [Fact]
+    public async Task Disposing_the_engine_is_not_a_fault()
+    {
+        await LaunchedAsync();
+        var faults = new List<string>();
+        _engine.Faulted += faults.Add;
+
+        await _engine.DisposeAsync();
+
+        Assert.Empty(faults);
+    }
+
+    // ---- resume state ----
+
+    [Fact]
+    public async Task A_rejected_continue_leaves_the_state_as_it_was_and_an_accepted_one_runs()
+    {
+        await LaunchedAsync();
+        _adapter.Event("stopped", new { reason = "breakpoint", threadId = 1 });
+        await SyncAsync();
+        Assert.Equal(SessionState.Stopped, _engine.State);
+        _adapter.Script((req, a) =>
+        {
+            if (req.GetProperty("command").GetString() == "continue") a.Reject(req, "Thread is not stopped");
+            else a.Respond(req);
+        });
+
+        await Assert.ThrowsAsync<DapException>(() => _engine.ContinueAsync(null).WaitAsync(Bound));
+        Assert.Equal(SessionState.Stopped, _engine.State);
+
+        _adapter.Script((req, a) => a.Respond(req));
+        await _engine.ContinueAsync(null).WaitAsync(Bound);
+        Assert.Equal(SessionState.Running, _engine.State);
+    }
+
+    [Fact]
+    public async Task An_adapter_that_exits_instead_of_answering_disconnect_is_not_a_fault()
+    {
+        await LaunchedAsync();
+        var faults = new List<string>();
+        _engine.Faulted += faults.Add;
+        var closed = ClosedSignal();
+        _adapter.Script((req, a) =>
+        {
+            if (req.GetProperty("command").GetString() != "disconnect") a.Respond(req);
+            else a.Eof(); // the adapter goes away mid-disconnect
+        });
+
+        await _engine.TerminateAsync(true).WaitAsync(Bound);
+        await closed;
+
+        Assert.Empty(faults);
+    }
+
+    // Completes after the engine's own subscriber has seen the connection close (it subscribed first).
+    Task ClosedSignal()
+    {
+        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _adapter.Client.ConnectionClosed += _ => tcs.TrySetResult();
+        return tcs.Task.WaitAsync(Bound);
+    }
+
     // ---- requests carry the caller's token ----
 
     [Fact]
@@ -260,6 +398,9 @@ public class DapEngineTests : IDisposable
         await LaunchedAsync();
         using var cts = new CancellationTokenSource();
 
+        // The adapter never answers 'evaluate' (the scripted handshake would answer everything,
+        // making this a race between that answer and the cancellation).
+        _adapter.Script((req, a) => { if (req.GetProperty("command").GetString() != "evaluate") a.Respond(req); });
         var eval = _engine.EvaluateAsync("Slow()", null, null, cts.Token);
         await cts.CancelAsync();
 

@@ -64,6 +64,9 @@ public sealed class DapClient : IDisposable
     public event Action<int>? ProcessStarted;         // systemProcessId
     public event Action<string, string>? Output;      // (category, text) of an 'output' event
     public event Action<JsonElement>? BreakpointChanged;
+    /// <summary>Raised once when the connection is lost (the adapter ended or the stream
+    /// broke) — not when this client is disposed. Carries the same error later requests fail with.</summary>
+    public event Action<IOException>? ConnectionClosed;
 
     public int TargetPid { get; private set; }
 
@@ -375,15 +378,17 @@ public sealed class DapClient : IDisposable
         var sb = new StringBuilder("DAP connection to netcoredbg closed: ").Append(reason).Append(exitInfo).Append('.');
         string tail = _diagnostics.GetTail(DiagnosticsCapacity).Trim();
         if (tail.Length > 0) sb.Append(" Adapter stderr / client notes (tail): ").Append(tail);
-        Close(new IOException(sb.ToString(), error));
+        var cause = new IOException(sb.ToString(), error);
+        if (Close(cause)) Isolate("connection-closed", () => ConnectionClosed?.Invoke(cause));
     }
 
-    void Close(IOException cause)
+    bool Close(IOException cause)
     {
-        if (Interlocked.CompareExchange(ref _closed, cause, null) is not null) return;
+        if (Interlocked.CompareExchange(ref _closed, cause, null) is not null) return false;
         foreach (var kv in _pending)
             if (_pending.TryRemove(kv.Key, out var tcs)) tcs.TrySetException(cause);
         _initialized.TrySetException(cause);
+        return true;
     }
 
     public void Dispose()

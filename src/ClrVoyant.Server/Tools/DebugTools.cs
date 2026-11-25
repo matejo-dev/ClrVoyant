@@ -44,7 +44,7 @@ public static class DebugTools
         5. For async: list_tasks / get_async_graph / get_async_callstack — the unique
            feature; see ALL in-flight Tasks and their await/continuation chains.
         6. restart_debugging() to rerun with the same breakpoints (and env); clear_all_breakpoints
-           to reset. debug_stop when done: it kills a process you launched, but only
+           to reset. debug_stop when done: it kills a process you launched (and children auto-attached from it), but only
            detaches from one you attached to (the process keeps running).
         7. The debuggee's stdout/stderr and exit code: get_output() returns the captured
            tail; the exit code is also in the result of continue/step when the process
@@ -127,7 +127,7 @@ public static class DebugTools
         => sessions.Resolve(sessionId).ToInfo();
 
     [McpServerTool(Name = "debug_stop")]
-    [Description("End the debug session. By default the debuggee is KILLED if this server started it (debug_launch, or the test host behind debug_test), but only DETACHED from — left running — if the session was created by debug_attach (including processes found by auto-attach). Pass 'terminate' to force either: true kills the process even if you only attached to it; false detaches and leaves it running (for a debug_test session the 'dotnet test' run is always ended with the session, so false cannot keep it alive; for a debug_launch session, a process whose console output goes through the debugger may fail when it next writes). Returns 'stopped'.")]
+    [Description("End the debug session. By default the debuggee is KILLED if this server started it (debug_launch, the test host behind debug_test, or a child process auto-attached from such a session), but only DETACHED from — left running — if the session was created by debug_attach (including a child auto-attached from an attached session). Pass 'terminate' to force either: true kills the process even if you only attached to it; false detaches and leaves it running (for a debug_test session the 'dotnet test' run is always ended with the session, so false cannot keep it alive; for a debug_launch session, a process whose console output goes through the debugger may fail when it next writes). Returns 'stopped'.")]
     public static async Task<string> DebugStop(
         SessionManager sessions,
         [Description("Session id; omit for the active session.")] string? sessionId = null,
@@ -158,7 +158,7 @@ public static class DebugTools
         => sessions.List();
 
     [McpServerTool(Name = "wait_for_any_stop")]
-    [Description("Block until ANY session hits a stop (breakpoint, step, exception), then report which one. Essential when several processes run asynchronously.")]
+    [Description("Block until ANY session hits a stop (breakpoint, step, exception) or its process exits (or its debugger connection is lost), then report which one and its state; events that are no longer true are skipped. Essential when several processes run asynchronously.")]
     public static async Task<object> WaitForAnyStop(
         SessionManager sessions,
         [Description("Max time to wait, milliseconds.")] int timeoutMs = 30000)
