@@ -128,7 +128,7 @@ public class SessionTests
         await Assert.ThrowsAsync<InvalidOperationException>(() => s.GetThreadsAsync());
         await Assert.ThrowsAsync<InvalidOperationException>(() => s.GetStackTraceAsync(1, 0, 1));
         await Assert.ThrowsAsync<InvalidOperationException>(() => s.GetScopesAsync(0));
-        await Assert.ThrowsAsync<InvalidOperationException>(() => s.GetVariablesAsync(1));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => s.GetVariablesAsync(1, 0, 10));
         await Assert.ThrowsAsync<InvalidOperationException>(() => s.EvaluateAsync("x", null, null));
         await Assert.ThrowsAsync<InvalidOperationException>(() => s.GetExceptionInfoAsync(1));
     }
@@ -222,5 +222,125 @@ public class SessionTests
 
         Assert.Equal(SessionState.Stopped, outcome.State);
         Assert.Equal("raw.cs", outcome.Stop!.File); // unenriched, but not lost
+    }
+
+    // ---- source breakpoints by content ----
+
+    static async Task<string> WithSource(params string[] lines)
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"clrvoyant-{Guid.NewGuid():N}.cs");
+        await File.WriteAllLinesAsync(path, lines);
+        return path;
+    }
+
+    [Fact]
+    public async Task A_breakpoint_by_content_is_set_on_the_line_the_text_is_found_on()
+    {
+        string path = await WithSource("a();", "b();", "c();");
+        try
+        {
+            var fake = new FakeDebugEngine();
+            var bp = await NewSession(fake).AddSourceBreakpointAsync(path, new BreakpointRequest(0, Condition: "i > 1"), "b();");
+
+            Assert.Equal(2, bp.Line);
+            Assert.Equal(2, Assert.Single(Assert.Single(fake.SetBreakpointCalls).bps).Line);
+            Assert.Equal("i > 1", fake.SetBreakpointCalls[0].bps[0].Condition); // the other fields travel along
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public async Task The_line_is_only_a_hint_when_content_is_given()
+    {
+        string path = await WithSource("x++;", "y++;", "x++;");
+        try
+        {
+            var bp = await NewSession(new FakeDebugEngine()).AddSourceBreakpointAsync(path, new BreakpointRequest(3), "x++;");
+
+            Assert.Equal(3, bp.Line); // two matches, the hint picked the nearer
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public async Task Without_content_the_line_is_used_as_given_and_must_be_valid()
+    {
+        var fake = new FakeDebugEngine();
+        var s = NewSession(fake);
+
+        Assert.Equal(17, (await s.AddSourceBreakpointAsync("never-read.cs", new BreakpointRequest(17), content: null)).Line);
+        foreach (int invalid in new[] { 0, -1 })
+        {
+            var ex = await Assert.ThrowsAsync<ArgumentException>(
+                () => s.AddSourceBreakpointAsync("never-read.cs", new BreakpointRequest(invalid), content: null));
+            Assert.Equal("Provide either a 1-based 'line' or the 'content' of the line to match.", ex.Message);
+        }
+        Assert.Single(fake.SetBreakpointCalls); // the invalid ones never reached the engine
+    }
+
+    // ---- the thread an operation applies to ----
+
+    [Fact]
+    public async Task The_thread_defaults_to_the_one_of_the_last_stop_and_an_explicit_one_wins()
+    {
+        var fake = new FakeDebugEngine { StopOnResume = new("raw.cs", 10, "breakpoint", 7) };
+        var s = NewSession(fake);
+        await s.ContinueAsync(null, TimeSpan.FromSeconds(2));
+
+        await s.StepAsync(StepKind.Over, null, TimeSpan.FromSeconds(2));
+        await s.GetStackTraceAsync(null, 0, 5);
+        await s.GetStackTraceAsync(99, 0, 5);
+
+        Assert.Equal([7], fake.StepThreadIds);
+        // (the first stack trace request is the stop's own enrichment, of thread 7 too)
+        Assert.Equal([7, 7, 7, 99], fake.StackTraceThreadIds);
+    }
+
+    [Fact]
+    public async Task Without_a_stop_there_is_no_thread_to_default_to()
+    {
+        var fake = new FakeDebugEngine { State = SessionState.Running, StopOnResume = null };
+        var s = NewSession(fake);
+
+        var ex = Assert.Throws<InvalidOperationException>(() => s.ResolveThread(null));
+        Assert.Equal("Session 's1' has no current thread (it has not stopped yet); pass threadId.", ex.Message);
+        Assert.Equal(5, s.ResolveThread(5));
+        // Stepping resolves the thread before it arms a wait: nothing was sent, nothing is left armed.
+        await Assert.ThrowsAsync<InvalidOperationException>(() => s.StepAsync(StepKind.Over, null, TimeSpan.FromSeconds(1)));
+        Assert.Empty(fake.Steps);
+        Assert.Equal(SessionState.Running, (await s.ContinueAsync(null, TimeSpan.FromMilliseconds(50))).State);
+    }
+
+    // ---- variables are paged at the debugger, not sliced here ----
+
+    [Fact]
+    public async Task Variables_are_requested_as_a_window_with_one_lookahead_item()
+    {
+        var fake = new FakeDebugEngine { State = SessionState.Stopped };
+        for (int i = 0; i < 12; i++) fake.Variables.Add(new Variable($"v{i}", "0", "int", 0)); // 13 in all with the default one
+        var s = NewSession(fake);
+
+        var page = await s.GetVariablesAsync(5, offset: 4, max: 5);
+
+        Assert.Equal([(4, 6)], fake.VariablesRequests); // start=offset, count=max+1: never "everything"
+        Assert.Equal(["v3", "v4", "v5", "v6", "v7"], page.Items.Select(v => v.Name));
+        Assert.True(page.Truncated);
+        Assert.Equal(9, page.NextOffset);
+        Assert.Null(page.Total);
+
+        var last = await s.GetVariablesAsync(5, offset: 9, max: 5);
+        Assert.Equal(["v8", "v9", "v10", "v11"], last.Items.Select(v => v.Name));
+        Assert.False(last.Truncated);
+    }
+
+    [Fact]
+    public async Task A_bad_variables_window_is_refused_before_the_debugger_is_asked()
+    {
+        var fake = new FakeDebugEngine { State = SessionState.Stopped };
+        var s = NewSession(fake);
+
+        await Assert.ThrowsAsync<ArgumentException>(() => s.GetVariablesAsync(1, offset: 0, max: 0));
+        await Assert.ThrowsAsync<ArgumentException>(() => s.GetVariablesAsync(1, offset: -1, max: 10));
+        Assert.Empty(fake.VariablesRequests);
     }
 }

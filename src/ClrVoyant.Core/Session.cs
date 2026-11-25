@@ -282,6 +282,21 @@ public sealed class Session : IAsyncDisposable
     }
 
     // --- Breakpoints (allowed while running) ---
+
+    /// <summary>Set a source breakpoint from what a caller can actually supply: a 1-based line,
+    /// or the text of the target line. With <paramref name="content"/> the line is resolved by
+    /// matching that text in the file (<see cref="BreakpointLocator"/>) and
+    /// <c>req.Line</c> is only a hint (0 = none) that picks between several matches.</summary>
+    /// <exception cref="ArgumentException">Neither a valid line nor content was given.</exception>
+    public async Task<Breakpoint> AddSourceBreakpointAsync(string file, BreakpointRequest req, string? content, CancellationToken ct = default)
+    {
+        if (content is not null)
+            req = req with { Line = await BreakpointLocator.ResolveInFileAsync(file, content, req.Line > 0 ? req.Line : null, ct) };
+        else if (req.Line < 1)
+            throw new ArgumentException("Provide either a 1-based 'line' or the 'content' of the line to match.");
+        return await AddBreakpointAsync(file, req, ct);
+    }
+
     public async Task<Breakpoint> AddBreakpointAsync(string file, BreakpointRequest req, CancellationToken ct = default)
     {
         string fullPath = Path.GetFullPath(file);
@@ -423,24 +438,42 @@ public sealed class Session : IAsyncDisposable
     // --- Execution control (wait-based) ---
     public Task<StopOutcome> ContinueAsync(int? threadId, TimeSpan timeout, CancellationToken ct = default)
         => ResumeAndWaitAsync(() => Engine.ContinueAsync(threadId, ct), timeout, ct);
-    public Task<StopOutcome> StepAsync(StepKind kind, int threadId, TimeSpan timeout, CancellationToken ct = default)
-        => ResumeAndWaitAsync(() => Engine.StepAsync(kind, threadId, ct), timeout, ct);
+    public Task<StopOutcome> StepAsync(StepKind kind, int? threadId, TimeSpan timeout, CancellationToken ct = default)
+    {
+        int tid = ResolveThread(threadId);
+        return ResumeAndWaitAsync(() => Engine.StepAsync(kind, tid, ct), timeout, ct);
+    }
     public Task PauseAsync(int? threadId, CancellationToken ct = default)
         => Engine.PauseAsync(threadId, ct);
 
     // --- Introspection (target must be stopped) ---
     public Task<IReadOnlyList<ThreadInfo>> GetThreadsAsync(CancellationToken ct = default)
     { EnsureStopped(); return Engine.GetThreadsAsync(ct); }
-    public Task<IReadOnlyList<StackFrame>> GetStackTraceAsync(int threadId, int startFrame, int levels, CancellationToken ct = default)
-    { EnsureStopped(); return Engine.GetStackTraceAsync(threadId, startFrame, levels, ct); }
+    public Task<IReadOnlyList<StackFrame>> GetStackTraceAsync(int? threadId, int startFrame, int levels, CancellationToken ct = default)
+    { EnsureStopped(); return Engine.GetStackTraceAsync(ResolveThread(threadId), startFrame, levels, ct); }
     public Task<IReadOnlyList<Scope>> GetScopesAsync(int frameId, CancellationToken ct = default)
     { EnsureStopped(); return Engine.GetScopesAsync(frameId, ct); }
-    public Task<IReadOnlyList<Variable>> GetVariablesAsync(int variablesReference, CancellationToken ct = default)
-    { EnsureStopped(); return Engine.GetVariablesAsync(variablesReference, ct); }
+
+    /// <summary>One window of the children of a variablesReference. The engine is asked for the
+    /// window itself (start/count) plus one lookahead item, never for everything, so a huge
+    /// collection costs one bounded request; the lookahead is what tells whether more exist.</summary>
+    public async Task<Page<Variable>> GetVariablesAsync(int variablesReference, int offset, int max, CancellationToken ct = default)
+    {
+        Paging.Validate(offset, max);
+        EnsureStopped();
+        var fetched = await Engine.GetVariablesAsync(variablesReference, offset, max + 1, ct);
+        return Page<Variable>.FromLookahead(fetched, offset, max);
+    }
     public Task<EvaluateResult> EvaluateAsync(string expression, int? frameId, string? context, CancellationToken ct = default)
     { EnsureStopped(); return Engine.EvaluateAsync(expression, frameId, context, ct); }
-    public Task<ExceptionInfo?> GetExceptionInfoAsync(int threadId, CancellationToken ct = default)
-    { EnsureStopped(); return Engine.GetExceptionInfoAsync(threadId, ct); }
+    public Task<ExceptionInfo?> GetExceptionInfoAsync(int? threadId, CancellationToken ct = default)
+    { EnsureStopped(); return Engine.GetExceptionInfoAsync(ResolveThread(threadId), ct); }
+
+    /// <summary>The thread an operation applies to: the one given, else the thread of the last stop.</summary>
+    /// <exception cref="InvalidOperationException">No thread was given and the session has not stopped yet.</exception>
+    public int ResolveThread(int? threadId)
+        => threadId ?? LastStop?.ThreadId
+            ?? throw new InvalidOperationException($"Session '{Id}' has no current thread (it has not stopped yet); pass threadId.");
 
     /// <summary>Restart the debuggee in place, keeping the same session id and
     /// breakpoint set. Terminates the current engine, swaps in <paramref name="newEngine"/>

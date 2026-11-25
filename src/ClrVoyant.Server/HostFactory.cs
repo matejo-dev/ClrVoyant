@@ -44,10 +44,8 @@ public static class HostFactory
 
         AddDebugServices(builder.Services);
         builder.Services
-            .AddMcpServer()
-            .WithStdioServerTransport()
-            .WithToolsFromAssembly()
-            .WithRequestFilters(AuditLog.Register);
+            .AddClrVoyantMcpServer()
+            .WithStdioServerTransport();
 
         return builder.Build();
     }
@@ -73,7 +71,7 @@ public static class HostFactory
 
         AddDebugServices(builder.Services);
         builder.Services
-            .AddMcpServer()
+            .AddClrVoyantMcpServer()
             .WithHttpTransport(o =>
             {
                 // SESSION MODE: stateless, set explicitly (2.x flipped the default; never rely on it).
@@ -88,9 +86,7 @@ public static class HostFactory
                 // Revisit (SessionMode.Stateful) only if a feature needs unsolicited server push
                 // (e.g. "stopped" events); stateless has no GET stream for those.
                 o.SessionMode = HttpServerSessionMode.Stateless;
-            })
-            .WithToolsFromAssembly()
-            .WithRequestFilters(AuditLog.Register);
+            });
 
         var app = builder.Build();
         app.Use(async (ctx, next) =>
@@ -116,13 +112,19 @@ public static class HostFactory
     /// the whole server (it manufactures a DapEngine per session over netcoredbg,
     /// resolved lazily so the host can be built/inspected without the engine
     /// present; it tells the ClrMD TaskInspector when a process is gone), the
-    /// TaskInspector, and the opt-in child-process auto-attach.</summary>
-    static void AddDebugServices(IServiceCollection services)
+    /// TaskInspector, and the opt-in child-process auto-attach. <paramref name="engineFactory"/>
+    /// replaces the netcoredbg-backed engine (tests); the wiring around it stays the real one.</summary>
+    internal static void AddDebugServices(IServiceCollection services, Func<IDebugEngine>? engineFactory = null)
     {
         services.AddSingleton(sp =>
         {
-            string netcoredbg = NetcoredbgLocator.Resolve();
-            var sessions = new SessionManager(() => new DapEngine(netcoredbg));
+            var factory = engineFactory;
+            if (factory is null)
+            {
+                string netcoredbg = NetcoredbgLocator.Resolve();
+                factory = () => new DapEngine(netcoredbg);
+            }
+            var sessions = new SessionManager(factory);
             // A process that is gone must not keep a heap snapshot (or lend it to a recycled pid).
             var inspector = sp.GetRequiredService<TaskInspector>();
             sessions.DebuggeeEnded += inspector.Evict;

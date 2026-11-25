@@ -77,6 +77,13 @@ public sealed class InstalledToolTests
             Assert.Contains("SampleApp", Payload(stack), StringComparison.OrdinalIgnoreCase);
 
             await client.CallToolAsync("debug_stop", cancellationToken: ct);
+
+            // Over the real stdio transport: the playbook arrives with the handshake, and a failed call
+            // says why instead of the SDK's generic text.
+            Assert.StartsWith("ClrVoyant", client.ServerInstructions);
+            var noSession = await client.CallToolAsync("debug_status", cancellationToken: ct);
+            Assert.True(noSession.IsError == true);
+            Assert.Equal("No active debug session.", Payload(noSession).Trim());
         }
         finally
         {

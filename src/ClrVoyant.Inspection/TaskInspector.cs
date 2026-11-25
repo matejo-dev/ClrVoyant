@@ -50,13 +50,14 @@ public sealed class TaskInspector : IDisposable
     readonly System.Collections.Concurrent.ConcurrentDictionary<int, PidCache> _byPid = new();
 
     // Run a read against a snapshot for (pid, stopId), reusing the cached one if it
-    // matches the current stop, otherwise taking a fresh snapshot.
-    T Read<T>(int pid, long stopId, Func<ClrRuntime, T> read)
+    // matches the current stop, otherwise taking a fresh snapshot. Cancellation is honoured
+    // while queuing for the pid's lock; the read itself checks the token as it walks.
+    T Read<T>(int pid, long stopId, CancellationToken ct, Func<ClrRuntime, T> read)
     {
         while (true)
         {
             var pc = _byPid.GetOrAdd(pid, _ => new PidCache());
-            pc.Gate.Wait();
+            pc.Gate.Wait(ct);
             try
             {
                 if (pc.Evicted) continue; // the process ended while we queued: start over with a fresh entry
@@ -139,56 +140,72 @@ public sealed class TaskInspector : IDisposable
         new(@"<(?<m>[A-Za-z0-9_]+)>\$", RegexOptions.Compiled),
     };
 
-    /// <summary>Enumerate every managed <c>Task</c> on the (stopped) target's heap.</summary>
-    public IReadOnlyList<TaskInfo> EnumerateTasks(int pid, long stopId) => Read(pid, stopId, runtime =>
+    /// <summary>One window of the managed <c>Task</c>s on the (stopped) target's heap, optionally
+    /// only those whose status equals <paramref name="status"/> (case-insensitive). The heap is
+    /// walked completely so the total is exact, but the status is read first and only the tasks
+    /// inside the window are decoded in full.</summary>
+    public Page<TaskInfo> EnumerateTasks(int pid, long stopId, string? status, int offset, int max, CancellationToken ct = default)
     {
-        var result = new List<TaskInfo>();
-        foreach (ClrObject obj in runtime.Heap.EnumerateObjects())
+        var page = new PageBuilder<TaskInfo>(offset, max);
+        return Read(pid, stopId, ct, runtime =>
         {
-            if (obj.Type is null || !IsTask(obj.Type)) continue;
-            var info = TryReadTask(obj);
-            if (info is not null) result.Add(info);
-        }
-        return (IReadOnlyList<TaskInfo>)result;
-    });
+            foreach (ClrObject obj in runtime.Heap.EnumerateObjects())
+            {
+                ct.ThrowIfCancellationRequested();
+                if (obj.Type is null || !IsTask(obj.Type)) continue;
+                int flags;
+                try { flags = obj.ReadField<int>("m_stateFlags"); }
+                catch { continue; } // not the real Task layout
+                string taskStatus = StatusOf(flags);
+                if (status is not null && !taskStatus.Equals(status, StringComparison.OrdinalIgnoreCase)) continue;
+                page.Add(() => ReadTask(obj, taskStatus));
+            }
+            return page.Build();
+        });
+    }
 
     /// <summary>Read a single <c>Task</c> by its heap address (returns null if it is not a Task).</summary>
-    public TaskInfo? GetTask(int pid, long stopId, ulong address) => Read(pid, stopId, runtime =>
+    public TaskInfo? GetTask(int pid, long stopId, ulong address, CancellationToken ct = default) => Read(pid, stopId, ct, runtime =>
     {
         var obj = runtime.Heap.GetObject(address);
         return obj.Type is not null && IsTask(obj.Type) ? TryReadTask(obj) : null;
     });
 
-    /// <summary>Reconstruct the async await/continuation graph: for each
-    /// async-relevant Task, what it awaits and what it continues into.</summary>
-    public IReadOnlyList<AsyncNode> BuildAsyncGraph(int pid, long stopId) => Read(pid, stopId, runtime =>
+    /// <summary>One window of the async await/continuation graph: for each async-relevant
+    /// Task, what it awaits and what it continues into. The heap is walked completely so the
+    /// total is exact; only the nodes inside the window are kept.</summary>
+    public Page<AsyncNode> BuildAsyncGraph(int pid, long stopId, int offset, int max, CancellationToken ct = default)
     {
-        var nodes = new List<AsyncNode>();
-        foreach (ClrObject obj in runtime.Heap.EnumerateObjects())
+        var nodes = new PageBuilder<AsyncNode>(offset, max);
+        return Read(pid, stopId, ct, runtime =>
         {
-            if (obj.Type is null || !IsTask(obj.Type)) continue;
-            int flags;
-            try { flags = obj.ReadField<int>("m_stateFlags"); }
-            catch { continue; }
+            foreach (ClrObject obj in runtime.Heap.EnumerateObjects())
+            {
+                ct.ThrowIfCancellationRequested();
+                if (obj.Type is null || !IsTask(obj.Type)) continue;
+                int flags;
+                try { flags = obj.ReadField<int>("m_stateFlags"); }
+                catch { continue; }
 
-            string type = obj.Type.Name ?? "?";
-            var awaiting = ReadAwaiting(obj);
-            ulong contAddr = ContinuationAddr(obj);
-            string? asyncMethod = ExtractAsyncMethod(type);
+                string type = obj.Type.Name ?? "?";
+                var awaiting = ReadAwaiting(obj);
+                ulong contAddr = ContinuationAddr(obj);
+                string? asyncMethod = ExtractAsyncMethod(type);
 
-            // Keep only async-relevant nodes to limit noise.
-            if (asyncMethod is null && awaiting.Count == 0 && contAddr == 0) continue;
+                // Keep only async-relevant nodes to limit noise.
+                if (asyncMethod is null && awaiting.Count == 0 && contAddr == 0) continue;
 
-            nodes.Add(new AsyncNode(
-                $"0x{obj.Address:x}", StatusOf(flags), asyncMethod, type,
-                awaiting, contAddr == 0 ? null : $"0x{contAddr:x}"));
-        }
-        return (IReadOnlyList<AsyncNode>)nodes;
-    });
+                nodes.Add(new AsyncNode(
+                    $"0x{obj.Address:x}", StatusOf(flags), asyncMethod, type,
+                    awaiting, contAddr == 0 ? null : $"0x{contAddr:x}"));
+            }
+            return nodes.Build();
+        });
+    }
 
     /// <summary>Follow continuation links from a starting Task, producing the
     /// logical "what resumes next" chain (the async call stack upward).</summary>
-    public IReadOnlyList<AsyncNode> FollowContinuations(int pid, long stopId, ulong startAddress) => Read(pid, stopId, runtime =>
+    public IReadOnlyList<AsyncNode> FollowContinuations(int pid, long stopId, ulong startAddress, CancellationToken ct = default) => Read(pid, stopId, ct, runtime =>
     {
         var heap = runtime.Heap;
         var chain = new List<AsyncNode>();
@@ -196,6 +213,7 @@ public sealed class TaskInspector : IDisposable
         ulong cur = startAddress;
         while (cur != 0 && seen.Add(cur))
         {
+            ct.ThrowIfCancellationRequested();
             var obj = heap.GetObject(cur);
             if (obj.Type is null || !IsTask(obj.Type)) break;
             int flags;
@@ -320,7 +338,11 @@ public sealed class TaskInspector : IDisposable
         int flags;
         try { flags = obj.ReadField<int>("m_stateFlags"); }
         catch { return null; } // not the real Task layout
+        return ReadTask(obj, StatusOf(flags));
+    }
 
+    static TaskInfo ReadTask(ClrObject obj, string status)
+    {
         long id = 0;
         try { id = obj.ReadField<int>("m_taskId"); } catch { /* best-effort heap read: this field/layout may not be present */ }
 
@@ -338,7 +360,7 @@ public sealed class TaskInspector : IDisposable
         // machine box like AsyncStateMachineBox<Foo+<Method>d__N>.
         string? asyncMethod = ExtractAsyncMethod(typeName) ?? ExtractAsyncMethod(continuation);
 
-        return new TaskInfo(id, $"0x{obj.Address:x}", StatusOf(flags), typeName, asyncMethod, continuation);
+        return new TaskInfo(id, $"0x{obj.Address:x}", status, typeName, asyncMethod, continuation);
     }
 
     internal static string? ExtractAsyncMethod(string? typeName)

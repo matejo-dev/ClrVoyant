@@ -26,16 +26,16 @@ public sealed class NoPdbDebuggingTests
             string dll = Path.Combine(dir, "SampleApp.dll");
             Assert.False(File.Exists(Path.ChangeExtension(dll, ".pdb")), "the PDB must be absent for this test");
 
-            await DebugTools.DebugLaunch(mgr, dll);
+            await LifecycleTools.DebugLaunch(mgr, dll);
 
-            var fb = await DebugTools.SetFunctionBreakpoint(mgr, "Calc.Compute");
+            var fb = await BreakpointTools.SetFunctionBreakpoint(mgr, "Calc.Compute");
             Assert.False(fb.Verified, "a function breakpoint cannot bind without a PDB");
 
-            var lb = await DebugTools.SetBreakpoint(mgr, TestPaths.SampleAppSrc, content: "int offset = squared + 7;");
+            var lb = await BreakpointTools.SetBreakpoint(mgr, TestPaths.SampleAppSrc, content: "int offset = squared + 7;");
             Assert.False(lb.Verified, "a source breakpoint cannot bind without a PDB");
 
             // Nothing is bound, so the target keeps running and the resume times out.
-            var outcome = await DebugTools.Continue(mgr, null, 4000);
+            var outcome = await ExecutionTools.Continue(mgr, null, 4000);
             Assert.Equal(SessionState.Running, outcome.State);
             Assert.Null(outcome.Stop);
         }

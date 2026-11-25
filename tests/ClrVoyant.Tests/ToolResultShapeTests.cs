@@ -18,8 +18,8 @@ public class ToolResultShapeTests
     [Fact]
     public async Task Tools_return_json_text_and_advertise_no_output_schema()
     {
-        var list = McpServerTool.Create(typeof(DebugTools).GetMethod(nameof(DebugTools.ListProcesses))!, target: null);
-        var describe = McpServerTool.Create(typeof(DebugTools).GetMethod(nameof(DebugTools.GetDebugInstructions))!, target: null);
+        var list = McpServerTool.Create(typeof(LifecycleTools).GetMethod(nameof(LifecycleTools.ListProcesses))!, target: null);
+        var describe = McpServerTool.Create(typeof(LifecycleTools).GetMethod(nameof(LifecycleTools.GetDebugInstructions))!, target: null);
 
         CallToolResult? listResult = null, textResult = null;
         IList<McpClientTool>? advertised = null;

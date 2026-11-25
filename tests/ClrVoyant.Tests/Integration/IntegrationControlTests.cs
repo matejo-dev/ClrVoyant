@@ -13,9 +13,9 @@ public class IntegrationControlTests
     static async Task<SessionManager> StartStoppedAsync()
     {
         var mgr = NewManager();
-        await DebugTools.DebugLaunch(mgr, TestPaths.SampleAppDll);
-        await DebugTools.SetBreakpoint(mgr, TestPaths.SampleAppSrc, TestPaths.BreakpointLine);
-        await DebugTools.Continue(mgr, null, 20000);
+        await LifecycleTools.DebugLaunch(mgr, TestPaths.SampleAppDll);
+        await BreakpointTools.SetBreakpoint(mgr, TestPaths.SampleAppSrc, TestPaths.BreakpointLine);
+        await ExecutionTools.Continue(mgr, null, 20000);
         return mgr;
     }
 
@@ -25,8 +25,8 @@ public class IntegrationControlTests
         var mgr = NewManager();
         try
         {
-            await DebugTools.DebugLaunch(mgr, TestPaths.SampleAppDll);
-            var bp = await DebugTools.SetBreakpoint(mgr, TestPaths.SampleAppSrc, TestPaths.BreakpointLine);
+            await LifecycleTools.DebugLaunch(mgr, TestPaths.SampleAppDll);
+            var bp = await BreakpointTools.SetBreakpoint(mgr, TestPaths.SampleAppSrc, TestPaths.BreakpointLine);
             Assert.True(bp.Verified); // binds asynchronously; engine waits for the flip
         }
         finally { await Cleanup(mgr); }
@@ -40,19 +40,19 @@ public class IntegrationControlTests
         var mgr = NewManager();
         try
         {
-            await DebugTools.DebugLaunch(mgr, TestPaths.SampleAppDll);
-            var fb = await DebugTools.SetFunctionBreakpoint(mgr, "Calc.Compute");
+            await LifecycleTools.DebugLaunch(mgr, TestPaths.SampleAppDll);
+            var fb = await BreakpointTools.SetFunctionBreakpoint(mgr, "Calc.Compute");
             Assert.Equal("Calc.Compute", fb.FunctionName);
 
             // The proof is the HIT: function breakpoints bind lazily (when the module
             // loads), so the running target should stop inside Compute, no line given.
-            var outcome = await DebugTools.Continue(mgr, null, 20000);
+            var outcome = await ExecutionTools.Continue(mgr, null, 20000);
             Assert.Equal(SessionState.Stopped, outcome.State);
 
-            var stack = await DebugTools.GetCallstack(mgr, null, 0, 5);
+            var stack = await InspectionTools.GetCallstack(mgr, null, 0, 5);
             Assert.Contains(stack, f => f.Function.Contains("Compute", StringComparison.OrdinalIgnoreCase));
 
-            var listed = await DebugTools.ListFunctionBreakpoints(mgr);
+            var listed = await BreakpointTools.ListFunctionBreakpoints(mgr);
             Assert.Contains(listed, b => b.Id == fb.Id && b.FunctionName == "Calc.Compute");
         }
         finally { await Cleanup(mgr); }
@@ -64,7 +64,7 @@ public class IntegrationControlTests
         var mgr = await StartStoppedAsync();
         try
         {
-            var outcome = await DebugTools.StepOver(mgr, null, 20000);
+            var outcome = await ExecutionTools.StepOver(mgr, null, 20000);
             Assert.Equal(SessionState.Stopped, outcome.State);
             Assert.Equal("step", outcome.Stop!.Reason);
             Assert.True(outcome.Stop!.Line > TestPaths.BreakpointLine);
@@ -78,10 +78,10 @@ public class IntegrationControlTests
         var mgr = await StartStoppedAsync();
         try
         {
-            var extra = await DebugTools.SetBreakpoint(mgr, TestPaths.SampleAppSrc, TestPaths.BreakpointLine + 1);
-            var before = await DebugTools.ListBreakpoints(mgr);
-            Assert.True(await DebugTools.RemoveBreakpoint(mgr, extra.Id));
-            var after = await DebugTools.ListBreakpoints(mgr);
+            var extra = await BreakpointTools.SetBreakpoint(mgr, TestPaths.SampleAppSrc, TestPaths.BreakpointLine + 1);
+            var before = await BreakpointTools.ListBreakpoints(mgr);
+            Assert.True(await BreakpointTools.RemoveBreakpoint(mgr, extra.Id));
+            var after = await BreakpointTools.ListBreakpoints(mgr);
             Assert.Equal(before.Count - 1, after.Count);
         }
         finally { await Cleanup(mgr); }
@@ -95,15 +95,15 @@ public class IntegrationControlTests
         var mgr = NewManager();
         try
         {
-            await DebugTools.DebugLaunch(mgr, TestPaths.SampleAppDll, stopAtEntry: true);
-            if (DebugTools.DebugStatus(mgr).State != SessionState.Stopped)
-                await DebugTools.WaitForAnyStop(mgr, 10000);
+            await LifecycleTools.DebugLaunch(mgr, TestPaths.SampleAppDll, stopAtEntry: true);
+            if (LifecycleTools.DebugStatus(mgr).State != SessionState.Stopped)
+                await ExecutionTools.WaitForAnyStop(mgr, 10000);
 
-            await DebugTools.SetExceptionBreakpoints(mgr, new[] { "all" });
-            var outcome = await DebugTools.Continue(mgr, null, 20000);
+            await BreakpointTools.SetExceptionBreakpoints(mgr, new[] { "all" });
+            var outcome = await ExecutionTools.Continue(mgr, null, 20000);
             Assert.Equal(SessionState.Stopped, outcome.State);
 
-            var info = await DebugTools.GetExceptionInfo(mgr, null);
+            var info = await InspectionTools.GetExceptionInfo(mgr, null);
             Assert.NotNull(info);
             Assert.Contains("InvalidOperationException", info!.TypeName + " " + info.Description);
         }
@@ -116,15 +116,15 @@ public class IntegrationControlTests
         var mgr = NewManager();
         try
         {
-            await DebugTools.DebugLaunch(mgr, TestPaths.SampleAppDll);
-            await DebugTools.SetBreakpoint(mgr, TestPaths.SampleAppSrc, TestPaths.BreakpointLine);
-            var fb = await DebugTools.SetFunctionBreakpoint(mgr, "Calc.Compute");
-            Assert.Contains(await DebugTools.ListFunctionBreakpoints(mgr), b => b.Id == fb.Id);
+            await LifecycleTools.DebugLaunch(mgr, TestPaths.SampleAppDll);
+            await BreakpointTools.SetBreakpoint(mgr, TestPaths.SampleAppSrc, TestPaths.BreakpointLine);
+            var fb = await BreakpointTools.SetFunctionBreakpoint(mgr, "Calc.Compute");
+            Assert.Contains(await BreakpointTools.ListFunctionBreakpoints(mgr), b => b.Id == fb.Id);
 
-            var msg = await DebugTools.ClearAllBreakpoints(mgr);
+            var msg = await BreakpointTools.ClearAllBreakpoints(mgr);
             Assert.Contains("2", msg); // "cleared 2 breakpoint(s)" — one source + one function
-            Assert.Empty(await DebugTools.ListBreakpoints(mgr));
-            Assert.Empty(await DebugTools.ListFunctionBreakpoints(mgr));
+            Assert.Empty(await BreakpointTools.ListBreakpoints(mgr));
+            Assert.Empty(await BreakpointTools.ListFunctionBreakpoints(mgr));
         }
         finally { await Cleanup(mgr); }
     }
@@ -135,7 +135,7 @@ public class IntegrationControlTests
         var mgr = await StartStoppedAsync();
         try
         {
-            var result = await DebugTools.SetExceptionBreakpoints(mgr, new[] { "all" });
+            var result = await BreakpointTools.SetExceptionBreakpoints(mgr, new[] { "all" });
             Assert.Equal("ok", result);
         }
         finally { await Cleanup(mgr); }
@@ -149,13 +149,13 @@ public class IntegrationControlTests
         var mgr = await StartStoppedAsync();
         try
         {
-            var bps = await DebugTools.ListBreakpoints(mgr);
-            foreach (var b in bps) await DebugTools.RemoveBreakpoint(mgr, b.Id);
+            var bps = await BreakpointTools.ListBreakpoints(mgr);
+            foreach (var b in bps) await BreakpointTools.RemoveBreakpoint(mgr, b.Id);
 
-            await DebugTools.Continue(mgr, null, 500); // times out -> running freely
-            await DebugTools.Pause(mgr);
+            await ExecutionTools.Continue(mgr, null, 500); // times out -> running freely
+            await ExecutionTools.Pause(mgr);
 
-            var stop = await DebugTools.WaitForAnyStop(mgr, 5000);
+            var stop = await ExecutionTools.WaitForAnyStop(mgr, 5000);
             Assert.IsType<SessionStop>(stop);
         }
         finally { await Cleanup(mgr); }
@@ -173,9 +173,9 @@ public class IntegrationControlTests
         var mgr = NewManager();
         try
         {
-            var info = await DebugTools.DebugAttach(mgr, proc.Id);
+            var info = await LifecycleTools.DebugAttach(mgr, proc.Id);
             Assert.Equal(proc.Id, info.Pid);
-            var status = DebugTools.DebugStatus(mgr, info.SessionId);
+            var status = LifecycleTools.DebugStatus(mgr, info.SessionId);
             Assert.Equal(info.SessionId, status.SessionId);
         }
         finally
@@ -196,7 +196,7 @@ public class IntegrationControlTests
         try
         {
             int deadPid = FindUnusedPid();
-            var ex = await Assert.ThrowsAnyAsync<Exception>(() => DebugTools.DebugAttach(mgr, deadPid));
+            var ex = await Assert.ThrowsAnyAsync<Exception>(() => LifecycleTools.DebugAttach(mgr, deadPid));
             Assert.True(ex is DapException or TimeoutException,
                 $"expected a DAP/timeout failure, got {ex.GetType().Name}: {ex.Message}");
             Assert.False(string.IsNullOrWhiteSpace(ex.Message));
@@ -221,12 +221,12 @@ public class IntegrationControlTests
         var mgr = NewManager();
         try
         {
-            var a = await DebugTools.DebugLaunch(mgr, TestPaths.SampleAppDll);
-            await DebugTools.DebugLaunch(mgr, TestPaths.SampleAppDll);
-            Assert.Equal(2, DebugTools.ListSessions(mgr).Count);
+            var a = await LifecycleTools.DebugLaunch(mgr, TestPaths.SampleAppDll);
+            await LifecycleTools.DebugLaunch(mgr, TestPaths.SampleAppDll);
+            Assert.Equal(2, LifecycleTools.ListSessions(mgr).Count);
 
-            await DebugTools.DebugStop(mgr, a.SessionId);
-            Assert.Single(DebugTools.ListSessions(mgr));
+            await LifecycleTools.DebugStop(mgr, a.SessionId);
+            Assert.Single(LifecycleTools.ListSessions(mgr));
         }
         finally { await Cleanup(mgr); }
     }
@@ -241,7 +241,7 @@ public class IntegrationControlTests
         try
         {
             // ParentApp spawns `dotnet SampleApp.dll` as a child .NET process.
-            var parent = await DebugTools.DebugLaunch(mgr, TestPaths.ParentAppDll, new[] { TestPaths.SampleAppDll });
+            var parent = await LifecycleTools.DebugLaunch(mgr, TestPaths.ParentAppDll, new[] { TestPaths.SampleAppDll });
 
             var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(20);
             while (DateTime.UtcNow < deadline && mgr.List().Count < 2)

@@ -111,7 +111,7 @@ public class SessionOutputAndStopTests
         engines[0].RaiseOutput("stdout", "hello");
         engines[0].RaiseExited(5);
 
-        var o = DebugTools.GetOutput(mgr);
+        var o = LifecycleTools.GetOutput(mgr);
 
         Assert.Equal("hello", o.Text);
         Assert.Equal(SessionState.Exited, o.State);
@@ -231,8 +231,8 @@ public class SessionOutputAndStopTests
         var attached = await mgr.AttachAsync(1);
         var launched = await mgr.LaunchAsync(new LaunchRequest("a.dll"));
 
-        await DebugTools.DebugStop(mgr, attached.SessionId, terminate);
-        await DebugTools.DebugStop(mgr, launched.SessionId, terminate);
+        await LifecycleTools.DebugStop(mgr, attached.SessionId, terminate);
+        await LifecycleTools.DebugStop(mgr, launched.SessionId, terminate);
 
         Assert.Equal(terminate, engines[0].LastTerminateDebuggee);
         Assert.Equal(terminate, engines[1].LastTerminateDebuggee);

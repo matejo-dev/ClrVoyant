@@ -1,49 +1,98 @@
+using ClrVoyant.Dap;
+using ClrVoyant.Server;
+using Microsoft.Extensions.Logging;
 using ModelContextProtocol;
+using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 
 namespace ClrVoyant.Tests;
 
 /// <summary>
-/// Pins what an MCP client actually receives when a tool method throws, and how the audit
-/// filter sees it. The tools use exception messages to tell the LLM how to recover (for
-/// example "no such session"), so this matters: observed on ModelContextProtocol 2.4.0
-/// (identical on 1.3.0), the SDK replaces the message of every exception type except
-/// <see cref="McpException"/> with a generic text. These expectations document CURRENT
-/// behaviour; a change that makes tool errors informative must update them consciously.
+/// What an MCP client receives when a tool method throws, through the production pipeline. The tools
+/// use exception messages to tell the LLM how to recover (which sessionId to pass, that the target
+/// must be stopped), but the SDK alone (observed on ModelContextProtocol 2.4.0) replaces the message of
+/// every exception except <see cref="McpException"/> with "An error occurred invoking '&lt;tool&gt;'".
+/// <see cref="ToolErrors"/> restores it at the dispatch boundary; these tests pin that decision.
 /// </summary>
 public class ToolExceptionTests
 {
-    public static IEnumerable<object[]> Throwables() =>
+    static McpServerTool Throwing(Exception thrown, string name = "boom")
+        => McpServerTool.Create((Func<string>)(() => throw thrown), new McpServerToolCreateOptions { Name = name });
+
+    public static IEnumerable<object[]> Expected() =>
     [
-        // Message is DROPPED: the client only learns that the invocation failed.
-        [new InvalidOperationException("xyz"), "An error occurred invoking 'boom'."],
-        [new ArgumentException("xyz"), "An error occurred invoking 'boom'."],
-        [new KeyNotFoundException("xyz"), "An error occurred invoking 'boom'."],
-        [new TimeoutException("xyz"), "An error occurred invoking 'boom'."],
-        // McpException is the one type whose message is forwarded to the client.
-        [new McpException("xyz"), "An error occurred invoking 'boom': xyz"],
+        // The kinds this code base throws on purpose to explain a condition: the message, unchanged.
+        [new InvalidOperationException("xyz")],
+        [new ArgumentException("xyz")],
+        [new KeyNotFoundException("xyz")],
+        [new TimeoutException("xyz")],
+        [new FileNotFoundException("xyz")],
+        [new DapException("variables", "xyz")],
+        [new McpException("xyz")],
     ];
 
     [Theory]
-    [MemberData(nameof(Throwables))]
-    public async Task Client_receives_this_text_and_audit_catch_branch_runs(Exception thrown, string expectedClientText)
+    [MemberData(nameof(Expected))]
+    public async Task An_expected_failure_reaches_the_client_as_its_own_message(Exception thrown)
     {
-        var boom = McpServerTool.Create(
-            (Func<string>)(() => throw thrown), new McpServerToolCreateOptions { Name = "boom" });
-
         CallToolResult? result = null;
-        var audit = await McpInMemory.RunAsync([boom], async (client, ct) =>
+        var audit = await McpInMemory.RunAsync([Throwing(thrown)], async (client, ct) =>
             result = await client.CallToolAsync("boom", cancellationToken: ct));
 
-        // The failure reaches the client as a tool error result, not as a protocol error.
-        Assert.NotNull(result);
-        Assert.True(result.IsError);
-        Assert.Equal(expectedClientText, Assert.IsType<TextContentBlock>(Assert.Single(result.Content)).Text);
+        Assert.True(result!.IsError);
+        Assert.Equal(thrown.Message, Assert.IsType<TextContentBlock>(Assert.Single(result.Content)).Text);
+        // The audit filter sits inside the mapping one, so it still sees the original exception and its message.
+        Assert.Equal([$"tools/call boom -> error ({thrown.Message})"], audit);
+    }
 
-        // The exception propagates THROUGH the audit filter (the SDK converts it to an error
-        // result outside the filter chain): the audit's catch branch ran and saw the original
-        // message. Only that branch logs the message; the IsError branch would log a bare "error".
-        Assert.Equal(["tools/call boom -> error (xyz)"], audit);
+    [Fact]
+    public async Task An_unexpected_failure_names_its_type_and_logs_the_stack_trace_only_on_the_server()
+    {
+        var thrown = new NullReferenceException("xyz");
+        CallToolResult? result = null;
+        var logs = await McpInMemory.RunAsync([Throwing(thrown)], async run =>
+            result = await run.Client.CallToolAsync("boom", cancellationToken: run.Ct));
+
+        Assert.True(result!.IsError);
+        Assert.Equal("Unexpected NullReferenceException: xyz", Assert.IsType<TextContentBlock>(Assert.Single(result.Content)).Text);
+        var logged = Assert.Single(logs.Entries, e => e.Category == ToolErrors.Category);
+        Assert.Equal(LogLevel.Error, logged.Level);
+        Assert.Same(thrown, logged.Exception);
+        Assert.Equal(["tools/call boom -> error (xyz)"], logs.Audit);
+    }
+
+    [Fact]
+    public async Task An_expected_failure_is_not_logged_as_a_server_error()
+    {
+        var logs = await McpInMemory.RunAsync([Throwing(new InvalidOperationException("xyz"))], async run =>
+            await run.Client.CallToolAsync("boom", cancellationToken: run.Ct));
+
+        Assert.DoesNotContain(logs.Entries, e => e.Category == ToolErrors.Category);
+    }
+
+    [Fact]
+    public async Task A_cancellation_that_nobody_requested_is_a_failure_not_a_cancelled_call()
+    {
+        // An internal timeout surfacing as OperationCanceledException is not the client cancelling.
+        CallToolResult? result = null;
+        await McpInMemory.RunAsync([Throwing(new OperationCanceledException("xyz"))], async (client, ct) =>
+            result = await client.CallToolAsync("boom", cancellationToken: ct));
+
+        Assert.True(result!.IsError);
+        Assert.Equal("Unexpected OperationCanceledException: xyz", Assert.IsType<TextContentBlock>(Assert.Single(result.Content)).Text);
+    }
+
+    [Fact]
+    public async Task A_protocol_error_stays_a_protocol_error()
+    {
+        var tool = Throwing(new McpProtocolException("bad params", McpErrorCode.InvalidParams));
+        var audit = await McpInMemory.RunAsync([tool], async (client, ct) =>
+        {
+            var ex = await Assert.ThrowsAsync<McpProtocolException>(() => client.CallToolAsync("boom", cancellationToken: ct).AsTask());
+            Assert.Equal(McpErrorCode.InvalidParams, ex.ErrorCode);
+        });
+
+        Assert.Equal(["tools/call boom -> error (bad params)"], audit);
     }
 }

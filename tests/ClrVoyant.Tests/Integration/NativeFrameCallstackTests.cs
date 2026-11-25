@@ -22,16 +22,16 @@ public sealed class NativeFrameCallstackTests
         var mgr = new SessionManager(() => new DapEngine(TestPaths.Netcoredbg));
         try
         {
-            await DebugTools.DebugLaunch(mgr, TestPaths.WinFormsAppDll);
-            var bp = await DebugTools.SetBreakpoint(mgr, TestPaths.WinFormsAppSrc, content: "int loadMarker = 42;");
+            await LifecycleTools.DebugLaunch(mgr, TestPaths.WinFormsAppDll);
+            var bp = await BreakpointTools.SetBreakpoint(mgr, TestPaths.WinFormsAppSrc, content: "int loadMarker = 42;");
 
-            var outcome = await DebugTools.Continue(mgr, null, 30000);
+            var outcome = await ExecutionTools.Continue(mgr, null, 30000);
             Assert.Equal(SessionState.Stopped, outcome.State);
             // The stop is enriched from the top stack frame, so it carries a location
             // only if the stack walk itself succeeds.
             Assert.Equal(bp.Line, outcome.Stop!.Line);
 
-            var stack = await DebugTools.GetCallstack(mgr, null, 0, 50);
+            var stack = await InspectionTools.GetCallstack(mgr, null, 0, 50);
             Assert.Contains("OnLoad", stack[0].Function);
             // Frames on BOTH sides of the native transition: the walk got past it.
             Assert.Contains(stack, f => f.Function.Contains("NativeWindow.Callback", StringComparison.Ordinal));

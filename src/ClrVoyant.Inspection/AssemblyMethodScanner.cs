@@ -16,11 +16,14 @@ public static class AssemblyMethodScanner
     /// Enumerate methods in <paramref name="assemblyPath"/>, optionally filtered by a
     /// type-name and/or method-name substring (case-insensitive). Compiler-generated
     /// members (names containing '&lt;') are skipped — their mangled names are not
-    /// usable as function breakpoints. Results are capped at <paramref name="max"/>.
+    /// usable as function breakpoints. Returns one window of <paramref name="max"/> methods
+    /// starting at <paramref name="offset"/>; the whole assembly is scanned (metadata only, cheap)
+    /// so the page carries the exact total of matches.
     /// </summary>
-    public static IReadOnlyList<MethodSymbol> ListMethods(
-        string assemblyPath, string? typeFilter = null, string? methodFilter = null, int max = 200)
+    public static Page<MethodSymbol> ListMethods(
+        string assemblyPath, string? typeFilter = null, string? methodFilter = null, int max = 200, int offset = 0)
     {
+        var page = new PageBuilder<MethodSymbol>(offset, max);
         if (!File.Exists(assemblyPath))
             throw new FileNotFoundException($"Assembly not found: {assemblyPath}", assemblyPath);
 
@@ -30,7 +33,6 @@ public static class AssemblyMethodScanner
             throw new InvalidOperationException($"Not a managed assembly (no metadata): {assemblyPath}");
 
         var md = pe.GetMetadataReader();
-        var result = new List<MethodSymbol>();
 
         foreach (var typeHandle in md.TypeDefinitions)
         {
@@ -48,11 +50,10 @@ public static class AssemblyMethodScanner
                 if (methodFilter is not null && !name.Contains(methodFilter, StringComparison.OrdinalIgnoreCase))
                     continue;
 
-                result.Add(new MethodSymbol($"{declaringType}.{name}", declaringType, name));
-                if (result.Count >= max) return result;
+                page.Add(() => new MethodSymbol($"{declaringType}.{name}", declaringType, name));
             }
         }
-        return result;
+        return page.Build();
     }
 
     // Build the metadata type name, prefixing the namespace and joining nested types

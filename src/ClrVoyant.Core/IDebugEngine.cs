@@ -50,7 +50,9 @@ public interface IDebugEngine : IAsyncDisposable
     Task<IReadOnlyList<ThreadInfo>> GetThreadsAsync(CancellationToken ct = default);
     Task<IReadOnlyList<StackFrame>> GetStackTraceAsync(int threadId, int startFrame, int levels, CancellationToken ct = default);
     Task<IReadOnlyList<Scope>> GetScopesAsync(int frameId, CancellationToken ct = default);
-    Task<IReadOnlyList<Variable>> GetVariablesAsync(int variablesReference, CancellationToken ct = default);
+    /// <summary>The children of <paramref name="variablesReference"/>, starting at child
+    /// <paramref name="start"/>, at most <paramref name="count"/> of them (0 = no limit).</summary>
+    Task<IReadOnlyList<Variable>> GetVariablesAsync(int variablesReference, int start, int count, CancellationToken ct = default);
     Task<EvaluateResult> EvaluateAsync(string expression, int? frameId, string? context, CancellationToken ct = default);
     Task<ExceptionInfo?> GetExceptionInfoAsync(int threadId, CancellationToken ct = default);
 }

@@ -72,7 +72,7 @@ public sealed record EvaluateResult(string Result, string Type, int VariablesRef
 
 public sealed record ExceptionInfo(string TypeName, string Description, string? Details);
 
-/// <summary>A managed Task discovered on the heap (Phase 4, ClrMD).</summary>
+/// <summary>A managed Task discovered on the heap (read with ClrMD).</summary>
 public sealed record TaskInfo(
     long TaskId,
     string Address,
@@ -81,7 +81,7 @@ public sealed record TaskInfo(
     string? AsyncMethod,
     string? Continuation);
 
-/// <summary>A node in the async await/continuation graph (Phase 5).
+/// <summary>A node in the async await/continuation graph.
 /// <paramref name="Awaiting"/> are the addresses of Tasks this state machine is
 /// parked on; <paramref name="ContinuationAddress"/> is the Task resumed when
 /// this one completes.</summary>

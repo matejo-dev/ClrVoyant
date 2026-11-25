@@ -382,6 +382,109 @@ public class DapEngineTests : IDisposable
         Assert.Empty(faults);
     }
 
+    // ---- variables are paged by the adapter ----
+
+    [Fact]
+    public async Task Variables_asks_the_adapter_for_the_window_and_reads_the_children()
+    {
+        await LaunchedAsync();
+        _adapter.Script((req, a) =>
+        {
+            if (req.GetProperty("command").GetString() == "variables")
+                a.Respond(req, new { variables = new object[]
+                {
+                    new { name = "a", value = "1", type = "int", variablesReference = 0 },
+                    new { name = "list", value = "{List<int>}", type = "List<int>", variablesReference = 12 },
+                    new { name = "bare" }, // value, type and reference are optional in DAP
+                } });
+            else a.Respond(req);
+        });
+
+        var vars = await _engine.GetVariablesAsync(5, start: 10, count: 3).WaitAsync(Bound);
+
+        var sent = _adapter.Find("variables")!.Value.GetProperty("arguments");
+        Assert.Equal(5, sent.GetProperty("variablesReference").GetInt32());
+        Assert.Equal(10, sent.GetProperty("start").GetInt32());
+        Assert.Equal(3, sent.GetProperty("count").GetInt32());
+        Assert.Equal(["a", "list", "bare"], vars.Select(v => v.Name));
+        Assert.Equal(12, vars[1].VariablesReference);
+        Assert.Equal(("", "", 0), (vars[2].Value, vars[2].Type, vars[2].VariablesReference));
+    }
+
+    [Fact]
+    public async Task Variables_without_a_window_sends_neither_start_nor_count()
+    {
+        await LaunchedAsync();
+        _adapter.Script((req, a) => a.Respond(req, new { variables = Array.Empty<object>() }));
+
+        await _engine.GetVariablesAsync(5, start: 0, count: 0).WaitAsync(Bound);
+
+        var sent = _adapter.Find("variables")!.Value.GetProperty("arguments");
+        Assert.False(sent.TryGetProperty("start", out _));
+        Assert.False(sent.TryGetProperty("count", out _));
+    }
+
+    // ---- pause needs a thread; the engine finds one ----
+
+    [Fact]
+    public async Task Pause_of_a_named_thread_sends_that_thread()
+    {
+        await LaunchedAsync();
+
+        await _engine.PauseAsync(9).WaitAsync(Bound);
+
+        Assert.Equal(9, _adapter.Find("pause")!.Value.GetProperty("arguments").GetProperty("threadId").GetInt32());
+        Assert.Null(_adapter.Find("threads")); // no need to ask
+    }
+
+    [Fact]
+    public async Task Pause_without_a_known_thread_asks_the_adapter_for_one()
+    {
+        await LaunchedAsync();
+        _adapter.Script((req, a) =>
+        {
+            if (req.GetProperty("command").GetString() == "threads")
+                a.Respond(req, new { threads = new[] { new { id = 4, name = "main" }, new { id = 5, name = "worker" } } });
+            else a.Respond(req);
+        });
+
+        await _engine.PauseAsync(null).WaitAsync(Bound);
+
+        Assert.Equal(4, _adapter.Find("pause")!.Value.GetProperty("arguments").GetProperty("threadId").GetInt32());
+    }
+
+    [Fact]
+    public async Task Pause_prefers_the_thread_of_the_last_stop_over_asking()
+    {
+        await LaunchedAsync();
+        _adapter.Event("stopped", new { reason = "breakpoint", threadId = 3 });
+        await SyncAsync();
+
+        await _engine.PauseAsync(null).WaitAsync(Bound);
+
+        Assert.Equal(3, _adapter.Find("pause")!.Value.GetProperty("arguments").GetProperty("threadId").GetInt32());
+        Assert.Null(_adapter.Find("threads"));
+    }
+
+    [Fact]
+    public async Task Pause_of_a_target_whose_threads_cannot_be_listed_reports_the_adapters_own_refusal()
+    {
+        await LaunchedAsync();
+        _adapter.Script((req, a) =>
+        {
+            switch (req.GetProperty("command").GetString())
+            {
+                case "threads": a.Reject(req, "running"); break;
+                case "pause": a.Reject(req, "Invalid threadId"); break;
+                default: a.Respond(req); break;
+            }
+        });
+
+        var ex = await Assert.ThrowsAsync<DapException>(() => _engine.PauseAsync(null).WaitAsync(Bound));
+
+        Assert.Contains("Invalid threadId", ex.Message); // the pause error, not the swallowed threads one
+    }
+
     // Completes after the engine's own subscriber has seen the connection close (it subscribed first).
     Task ClosedSignal()
     {

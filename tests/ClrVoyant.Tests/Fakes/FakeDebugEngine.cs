@@ -61,6 +61,9 @@ public sealed class FakeDebugEngine : IDebugEngine
     // Recorded calls.
     public int ContinueCalls { get; private set; }
     public List<StepKind> Steps { get; } = new();
+    /// <summary>The thread each step / stack trace request named, in call order.</summary>
+    public List<int> StepThreadIds { get; } = new();
+    public List<int> StackTraceThreadIds { get; } = new();
     public int PauseCalls { get; private set; }
     public int TerminateCalls { get; private set; }
     /// <summary>The terminateDebuggee flag of the last TerminateAsync call (null if never called).</summary>
@@ -147,6 +150,7 @@ public sealed class FakeDebugEngine : IDebugEngine
     public Task StepAsync(StepKind kind, int threadId, CancellationToken ct = default)
     {
         Steps.Add(kind);
+        StepThreadIds.Add(threadId);
         return Resume();
     }
 
@@ -174,6 +178,7 @@ public sealed class FakeDebugEngine : IDebugEngine
 
     public async Task<IReadOnlyList<StackFrame>> GetStackTraceAsync(int threadId, int startFrame, int levels, CancellationToken ct = default)
     {
+        StackTraceThreadIds.Add(threadId);
         _stackTraceCalls.Release();
         if (StackTraceGate is { } gate) await gate;
         if (StackTraceFailure is not null) throw StackTraceFailure;
@@ -183,8 +188,18 @@ public sealed class FakeDebugEngine : IDebugEngine
     public Task<IReadOnlyList<Scope>> GetScopesAsync(int frameId, CancellationToken ct = default)
         => Task.FromResult<IReadOnlyList<Scope>>(new[] { new Scope("Locals", 100) });
 
-    public Task<IReadOnlyList<Variable>> GetVariablesAsync(int variablesReference, CancellationToken ct = default)
-        => Task.FromResult<IReadOnlyList<Variable>>(new[] { new Variable("x", "1", "int", 0) });
+    /// <summary>The children every variablesReference expands to.</summary>
+    public List<Variable> Variables { get; } = new() { new Variable("x", "1", "int", 0) };
+    /// <summary>The (start, count) of each variables request, as the engine received them.</summary>
+    public List<(int start, int count)> VariablesRequests { get; } = new();
+
+    // Honours start/count like a real DAP adapter (count 0 = all the rest).
+    public Task<IReadOnlyList<Variable>> GetVariablesAsync(int variablesReference, int start, int count, CancellationToken ct = default)
+    {
+        VariablesRequests.Add((start, count));
+        var window = Variables.Skip(start);
+        return Task.FromResult<IReadOnlyList<Variable>>((count > 0 ? window.Take(count) : window).ToList());
+    }
 
     public Task<EvaluateResult> EvaluateAsync(string expression, int? frameId, string? context, CancellationToken ct = default)
         => Task.FromResult(new EvaluateResult("42", "int", 0));

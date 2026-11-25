@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using ClrVoyant.Server;
+using ClrVoyant.Server.Tools;
 using ClrVoyant.Tests.Integration;
 using Microsoft.AspNetCore.Builder;
 using ModelContextProtocol.Client;
@@ -61,7 +62,13 @@ public class HttpTransportTests
             Assert.Null(client.SessionId);
 
             var tools = await client.ListToolsAsync(cancellationToken: ct);
-            Assert.Contains(tools, t => t.Name == "get_debug_instructions");
+            Assert.Equal(McpToolSurfaceTests.ToolNames.Order(StringComparer.Ordinal), tools.Select(t => t.Name).Order(StringComparer.Ordinal));
+
+            // The playbook arrives with the handshake, and a failing tool says why (not just "an error occurred").
+            Assert.Equal(DebugInstructions.Text, client.ServerInstructions);
+            var failed = await client.CallToolAsync("debug_status", cancellationToken: ct);
+            Assert.True(failed.IsError);
+            Assert.Equal("No active debug session.", Assert.IsType<TextContentBlock>(Assert.Single(failed.Content)).Text);
 
             for (int i = 0; i < 2; i++)
             {

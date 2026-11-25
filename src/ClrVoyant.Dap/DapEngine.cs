@@ -407,9 +407,13 @@ public sealed class DapEngine : IDebugEngine
         return list;
     }
 
-    public async Task<IReadOnlyList<Variable>> GetVariablesAsync(int variablesReference, CancellationToken ct = default)
+    public async Task<IReadOnlyList<Variable>> GetVariablesAsync(int variablesReference, int start, int count, CancellationToken ct = default)
     {
-        var resp = await _client.RequestAsync("variables", new { variablesReference }, ct);
+        // DAP pages server-side with start/count; both are omitted when 0 (the defaults: from the first, all).
+        var args = new Dictionary<string, object> { ["variablesReference"] = variablesReference };
+        if (start > 0) args["start"] = start;
+        if (count > 0) args["count"] = count;
+        var resp = await _client.RequestAsync("variables", args, ct);
         var list = new List<Variable>();
         foreach (var v in resp.GetProperty("body").GetProperty("variables").EnumerateArray())
             list.Add(new Variable(
