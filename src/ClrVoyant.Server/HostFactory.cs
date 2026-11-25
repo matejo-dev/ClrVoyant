@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using ModelContextProtocol.AspNetCore;
 
 namespace ClrVoyant.Server;
 
@@ -59,13 +60,35 @@ public static class HostFactory
                 "HTTP transport requires authentication: set CLRVOYANT_AUTH_TOKEN to a secret bearer token. " +
                 "An unauthenticated debug server that can launch processes and evaluate code is a remote-code-execution risk.");
 
+        var app = BuildHttpApp(args, token, Environment.GetEnvironmentVariable("CLRVOYANT_HTTP_URL") ?? "http://0.0.0.0:3001");
+        await app.RunAsync();
+    }
+
+    /// <summary>Build (without starting) the authenticated Streamable-HTTP host. Split out of
+    /// <see cref="RunHttpAsync"/> so tests can start the real wiring on an ephemeral port.</summary>
+    internal static WebApplication BuildHttpApp(string[] args, string token, string url)
+    {
         var builder = WebApplication.CreateBuilder(args);
-        builder.WebHost.UseUrls(Environment.GetEnvironmentVariable("CLRVOYANT_HTTP_URL") ?? "http://0.0.0.0:3001");
+        builder.WebHost.UseUrls(url);
 
         AddDebugServices(builder.Services);
         builder.Services
             .AddMcpServer()
-            .WithHttpTransport()
+            .WithHttpTransport(o =>
+            {
+                // SESSION MODE: stateless, set explicitly (2.x flipped the default; never rely on it).
+                // Nothing here needs MCP session state: debug sessions live in the process-wide
+                // SessionManager (addressed by the tools' own sessionId argument), no tool sends
+                // notifications or server-to-client requests (sampling/elicitation/roots), and
+                // every tool is a plain request/response. Stateless therefore loses nothing and
+                // avoids the stateful failure modes of a long-lived sidecar: a 404 and a forced
+                // re-initialize after the 2h idle timeout or a restart, and session affinity.
+                // Measured on 2.4.0 with an HTTP client that cancels an in-flight call: a tool's
+                // CancellationToken fired in stateless mode but NOT in stateful mode.
+                // Revisit (SessionMode.Stateful) only if a feature needs unsolicited server push
+                // (e.g. "stopped" events); stateless has no GET stream for those.
+                o.SessionMode = HttpServerSessionMode.Stateless;
+            })
             .WithToolsFromAssembly()
             .WithRequestFilters(AuditLog.Register);
 
@@ -86,7 +109,7 @@ public static class HostFactory
         });
         app.MapMcp();
 
-        await app.RunAsync();
+        return app;
     }
 
     /// <summary>Register the transport-independent services: one SessionManager for
