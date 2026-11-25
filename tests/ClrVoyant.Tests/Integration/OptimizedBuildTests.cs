@@ -56,7 +56,7 @@ public sealed class OptimizedBuildTests
     {
         // -p:Optimize=true overrides the sample's <Optimize>false>; keep a portable PDB.
         var psi = new ProcessStartInfo("dotnet",
-            $"build \"{csproj}\" -c Release -p:Optimize=true -p:DebugType=portable -p:DebugSymbols=true -o \"{outDir}\" --nologo")
+            $"build \"{csproj}\" -c Release -f {TestPaths.DefaultTfm} -p:Optimize=true -p:DebugType=portable -p:DebugSymbols=true -o \"{outDir}\" --nologo")
         {
             RedirectStandardOutput = true,
             RedirectStandardError = true,

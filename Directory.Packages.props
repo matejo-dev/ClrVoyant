@@ -9,18 +9,22 @@
 
   <ItemGroup Label="Product">
     <PackageVersion Include="Microsoft.Diagnostics.Runtime" Version="3.1.512801" />
-    <PackageVersion Include="Microsoft.Diagnostics.NETCore.Client" Version="0.2.661903" />
-    <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.8" />
     <PackageVersion Include="ModelContextProtocol" Version="1.3.0" />
     <PackageVersion Include="ModelContextProtocol.AspNetCore" Version="1.3.0" />
-    <PackageVersion Include="System.Management" Version="10.0.8" />
+    <PackageVersion Include="System.Management" Version="10.0.15" />
   </ItemGroup>
 
+  <!-- Used only by the historical spike/ probes (not built by the solution). -->
+  <ItemGroup Label="Spike">
+    <PackageVersion Include="Microsoft.Diagnostics.NETCore.Client" Version="0.2.661903" />
+  </ItemGroup>
+
+  <!-- Stay on xunit v2 + VSTest: the product's debug_test feature drives VSTest. -->
   <ItemGroup Label="Test">
-    <PackageVersion Include="coverlet.collector" Version="10.0.1" />
-    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
-    <PackageVersion Include="xunit" Version="2.5.3" />
-    <PackageVersion Include="xunit.runner.visualstudio" Version="2.5.3" />
+    <PackageVersion Include="coverlet.collector" Version="10.1.1" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.12.0" />
+    <PackageVersion Include="xunit" Version="2.9.3" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="2.8.2" />
   </ItemGroup>
 
 </Project>

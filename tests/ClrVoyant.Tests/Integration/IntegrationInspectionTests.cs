@@ -52,41 +52,9 @@ public class IntegrationInspectionTests : IClassFixture<DebugSessionFixture>
         Assert.Null(info);
     }
 
-    [Fact]
-    public async Task List_tasks_enumerates_with_status_and_async_method()
-    {
-        var tasks = await DebugTools.ListTasks(_fx.Mgr, _fx.Inspector);
-        Assert.NotEmpty(tasks);
-        Assert.Contains(tasks, t => t.Status == "WaitingForActivation");
-        Assert.Contains(tasks, t => t.AsyncMethod is "AwaitForever" or "Main");
-
-        // status filter
-        var wfa = await DebugTools.ListTasks(_fx.Mgr, _fx.Inspector, status: "waitingforactivation");
-        Assert.All(wfa, t => Assert.Equal("WaitingForActivation", t.Status));
-        Assert.NotEmpty(wfa);
-    }
-
-    [Fact]
-    public async Task Get_task_by_address()
-    {
-        var tasks = await DebugTools.ListTasks(_fx.Mgr, _fx.Inspector);
-        var any = tasks[0];
-        var got = await DebugTools.GetTask(_fx.Mgr, _fx.Inspector, any.Address);
-        Assert.NotNull(got);
-        Assert.Equal(any.Address, got!.Address);
-    }
-
-    [Fact]
-    public async Task Async_graph_has_awaiting_edge_and_callstack_follows_continuations()
-    {
-        var graph = await DebugTools.GetAsyncGraph(_fx.Mgr, _fx.Inspector);
-        Assert.NotEmpty(graph);
-        Assert.Contains(graph, n => n.Awaiting.Count > 0);
-
-        var withCont = graph.FirstOrDefault(n => n.ContinuationAddress is not null) ?? graph[0];
-        var chain = await DebugTools.GetAsyncCallstack(_fx.Mgr, _fx.Inspector, withCont.Address);
-        Assert.NotEmpty(chain);
-    }
+    // The positive ClrMD task / async-graph inspection tests live in TargetRuntimeTests,
+    // where they run against every supported target runtime; the negative cases below
+    // are runtime-independent and reuse this fixture's single launch.
 
     [Fact]
     public async Task Get_task_returns_null_for_non_task_address()

@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
 
@@ -32,5 +32,28 @@
     <ProjectReference Include="..\..\src\ClrVoyant.Inspection\ClrVoyant.Inspection.csproj" />
     <ProjectReference Include="..\..\src\ClrVoyant.Server\ClrVoyant.Server.csproj" />
   </ItemGroup>
+
+  <!-- The integration tests launch the sample debuggees as separate processes, so the
+       test assembly must not reference their assemblies (ReferenceOutputAssembly=false),
+       but they must be built before the tests run and restored with the same graph.
+       The reference makes a plain `dotnet test` of this project build them, and the
+       target below builds every target framework the tests debug (a ProjectReference
+       alone would only build the one matching this project's TFM). WinFormsApp is
+       Windows-only, so it is built (for the native-frames test) only on Windows. -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\samples\SampleApp\SampleApp.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\..\samples\ParentApp\ParentApp.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\..\samples\WinFormsApp\WinFormsApp.csproj" ReferenceOutputAssembly="false" SkipGetTargetFrameworkProperties="true"
+                      Condition="$([MSBuild]::IsOSPlatform('Windows'))" />
+  </ItemGroup>
+
+  <Target Name="BuildSampleDebuggeeTfms" AfterTargets="ResolveProjectReferences">
+    <ItemGroup>
+      <_DebuggeeProject Include="..\..\samples\SampleApp\SampleApp.csproj;..\..\samples\ParentApp\ParentApp.csproj" />
+    </ItemGroup>
+    <MSBuild Projects="@(_DebuggeeProject)" Targets="Build" Properties="TargetFramework=net8.0" />
+    <MSBuild Projects="@(_DebuggeeProject)" Targets="Build" Properties="TargetFramework=net9.0" />
+    <MSBuild Projects="@(_DebuggeeProject)" Targets="Build" Properties="TargetFramework=net10.0" />
+  </Target>
 
 </Project>
