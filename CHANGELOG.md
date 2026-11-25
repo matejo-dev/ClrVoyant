@@ -104,6 +104,11 @@ project version or the release workflow fails.
 
 ### Fixed
 
+- **Linux: the server could crash with SIGSEGV some time after `list_tasks`, `get_task` or
+  `get_async_graph`.** ClrMD unloaded the runtime's data-access library (`libmscordaccore.so`)
+  after each heap read, while threads that had called into it still carried a thread-exit
+  destructor pointing inside it; the process died when one of those threads later retired.
+  The library now stays loaded for the life of the process, one per target runtime version.
 - A debuggee that received a recycled PID no longer causes unrelated processes to be
   attached, and killed on `debug_stop`.
 - A rejected `continue`/`step_*` no longer leaves a waiter armed that swallowed the next

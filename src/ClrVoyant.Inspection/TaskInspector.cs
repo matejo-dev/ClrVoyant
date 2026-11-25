@@ -66,7 +66,7 @@ public sealed class TaskInspector : IDisposable
                     pc.Current?.Dispose();
                     pc.Current = null;
                     var dt = OpenDataTarget(pid);
-                    try { pc.Current = new Snapshot(stopId, dt, PickRuntime(dt.ClrVersions, pid).CreateRuntime()); }
+                    try { pc.Current = new Snapshot(stopId, dt, DacLibraryPin.CreateRuntimePinned(PickRuntime(dt.ClrVersions, pid))); }
                     catch { dt.Dispose(); throw; }
                 }
                 return read(pc.Current.Runtime);
