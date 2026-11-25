@@ -54,3 +54,18 @@ jobs:
         run: dotnet test tests/ClrVoyant.Tests/ClrVoyant.Tests.csproj -c Release
         env:
           CLRVOYANT_PACKAGING_TESTS: '1'
+
+      # The runner's glibc/libstdc++ is newer than what we support, so the tests above
+      # cannot see a netcoredbg bump that raises the Linux baseline (3.2.0-1092 needs
+      # glibc 2.38 and does not start on Debian 12). Start the bundled engine on the
+      # oldest supported bases: the sidecar's runtime image (read from
+      # deploy/Dockerfile, so the check follows it) and Ubuntu 22.04 (README floor).
+      - name: Linux engine starts on the oldest supported distros
+        if: runner.os == 'Linux'
+        run: |
+          runtime_image=$(sed -n 's/^FROM \([^ ]*\) AS runtime.*/\1/p' deploy/Dockerfile)
+          test -n "$runtime_image"
+          for image in "$runtime_image" ubuntu:22.04; do
+            echo "== $image"
+            docker run --rm -v "$PWD/tools/netcoredbg:/ncdbg:ro" "$image" /ncdbg/netcoredbg --version
+          done
