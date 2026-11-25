@@ -65,9 +65,12 @@ Concrete scenarios it delivers today (Windows or Linux, .NET 8/9/10):
 
 - **Supported architectures**: `win-x64`, `linux-x64`, `linux-arm64`. The engine
   debugs locally, so **the tool runs at the same architecture as the target** — an
-  arm64 tool for an arm64 process. (No `win-arm64` or macOS: netcoredbg ships no
-  such build.) Each architecture is exercised by its own CI leg, including an
+  arm64 tool for an arm64 process. (No `win-arm64`: netcoredbg ships no such
+  build. No macOS: not validated.) Each architecture is exercised by its own CI leg, including an
   `arm64` runner on real hardware — see [ADR-0011](docs/adr/0011-supported-architectures.md).
+- **Linux distribution**: glibc 2.34+ and a GCC 12+ libstdc++ (`GLIBCXX_3.4.30`),
+  the bundled engine's baseline — e.g. Debian 12, Ubuntu 22.04 or newer. Not Debian
+  11 or RHEL 9. CI starts the engine on Debian 12 (the sidecar image) and Ubuntu 22.04.
 - **.NET SDK 8 / 9 / 10** (the target apps you debug must be .NET 8+; .NET
   Framework is not supported)
 
@@ -252,6 +255,12 @@ Fuller breakdown with sources: [docs/comparison.md](docs/comparison.md).
 - `pause` requires a thread known from a prior stop (netcoredbg does not
   enumerate threads of a freely-running process).
 - Targets must be **.NET 8+** (netcoredbg does not debug .NET Framework).
+- **The bundled netcoredbg differs by OS**: 3.2.0-1092 on Windows, 3.1.3-1062 on
+  Linux (the 3.2.0 Linux builds need glibc 2.38, so they do not run on Debian 12 /
+  Ubuntu 22.04, where 3.1.3 does). 3.1.3 fails a whole `get_callstack` when a frame on the
+  stack is managed but not IL — seen with WinForms on .NET 10, not observed on Linux
+  so far. If you hit it on a glibc 2.38+ host, point `CLRVOYANT_NETCOREDBG` at a
+  3.2.0+ netcoredbg.
 
 ## Tests & coverage
 

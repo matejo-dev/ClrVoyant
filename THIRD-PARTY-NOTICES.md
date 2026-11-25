@@ -12,8 +12,9 @@ output you also redistribute netcoredbg under its license, reproduced below.
 
 - Project: https://github.com/Samsung/netcoredbg
 - Copyright (c) Samsung Electronics Co., LTD
-- Fetched version: pinned in `Directory.Build.props` (`NetcoredbgVersion`, the single
-  source of truth) and consumed by the server csproj.
+- Fetched version: pinned per platform in `Directory.Build.props`
+  (`NetcoredbgVersionWindows` / `NetcoredbgVersionLinux`, the single source of truth)
+  and consumed by the server csproj.
 
 ```
 MIT License
