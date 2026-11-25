@@ -87,6 +87,11 @@ jobs:
           CLRVOYANT_PACKAGING_TESTS: '1'
           # The three target runtimes are installed above: missing one is a failure.
           CLRVOYANT_REQUIRE_TARGET_RUNTIMES: '1'
+          # dotnet test (SDK 10) refuses its per-session artifacts directory on the
+          # hosted Linux runners ("can be accessed by users other than its owner" under
+          # /run/user) and then exits 1 even when every test passed. The directory is on
+          # an ephemeral single-tenant runner, so skip that check here.
+          VSTEST_DISABLE_ARTIFACTS_DIRECTORY_VERIFICATION: '1'
 
       # No -p:Version override: the package version is the csproj's <Version>,
       # already checked against the tag above.
